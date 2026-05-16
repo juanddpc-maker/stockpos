@@ -1,0 +1,30 @@
+# Entorno y secretos
+.env
+*.env.local
+
+# Base de datos SQLite local
+data/
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Assets subidos (logos, imágenes)
+assets/logo.png
+assets/logo.jpg
+
+# IDEs
+.vscode/
+.idea/
+*.swp
