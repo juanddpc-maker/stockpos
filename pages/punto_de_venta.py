@@ -1,8 +1,9 @@
 import streamlit as st
 from datetime import datetime, timedelta
-from database import q, run, next_folio, next_apartado_folio
+from database import q, run, next_folio, next_apartado_folio, get_config
 
-IVA = 0.16
+def get_iva():
+    return float(get_config("iva_pct", "16")) / 100
 
 def render():
     st.header("🛒 Punto de Venta")
@@ -47,7 +48,7 @@ def _panel_venta():
             st.info("Agrega productos desde el panel izquierdo.")
         else:
             subtotal = _render_cart(cart, "v")
-            iva   = round(subtotal * IVA, 2)
+            iva   = round(subtotal * get_iva(), 2)
             total = subtotal + iva
             _totales(subtotal, iva, total)
             metodo = st.selectbox("💳 Pago",
@@ -94,7 +95,7 @@ def _panel_apartar():
             st.info("Agrega productos desde el panel izquierdo.")
         else:
             subtotal = _render_cart(cart, "a")
-            iva   = round(subtotal * IVA, 2)
+            iva   = round(subtotal * get_iva(), 2)
             total = subtotal + iva
             _totales(subtotal, iva, total)
 
@@ -228,11 +229,12 @@ def _render_cart(cart, modo):
 
 
 def _totales(subtotal, iva, total):
+    iva_pct = int(get_config("iva_pct", "16"))
     st.markdown(f"""
 | Concepto | Monto |
 |---|---|
 | Subtotal | ${subtotal:,.2f} |
-| IVA 16% | ${iva:,.2f} |
+| IVA {iva_pct}% | ${iva:,.2f} |
 | **TOTAL** | **${total:,.2f}** |
 """)
 
