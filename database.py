@@ -193,10 +193,10 @@ def init_db():
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM categorias")
             n = cur.fetchone()[0]
-        # Migration: add talla columns to existing DBs
-        migrate_add_talla()
         if n == 0:
             _seed(conn, cur)
+    # Migration runs separately (safe to call on existing DBs)
+    migrate_add_talla()
 
 
 TALLAS = {
@@ -352,16 +352,19 @@ def migrate_add_talla():
                     "ALTER TABLE productos ADD COLUMN tipo_talla TEXT DEFAULT 'unico'",
                     "ALTER TABLE venta_items ADD COLUMN talla TEXT DEFAULT 'Única'",
                     "ALTER TABLE apartado_items ADD COLUMN talla TEXT DEFAULT 'Única'",
+                    "CREATE TABLE IF NOT EXISTS tallas_catalogo(id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT NOT NULL, talla TEXT NOT NULL, orden INTEGER DEFAULT 0, UNIQUE(tipo,talla))",
                 ]:
                     try: cur.execute(ddl)
                     except: pass
-                cur.execute("CREATE TABLE IF NOT EXISTS tallas_catalogo(id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT NOT NULL, talla TEXT NOT NULL, orden INTEGER DEFAULT 0, UNIQUE(tipo,talla))")
             # Seed tallas
             ph = "%s" if USE_PG else "?"
             for tipo, tallas in TALLAS.items():
                 for orden, talla in enumerate(tallas):
                     try:
-                        cur.execute(f"INSERT OR IGNORE INTO tallas_catalogo(tipo,talla,orden) VALUES({ph},{ph},{ph})", (tipo,talla,orden))
+                        if USE_PG:
+                            cur.execute(f"INSERT INTO tallas_catalogo(tipo,talla,orden) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (tipo,talla,orden))
+                        else:
+                            cur.execute("INSERT OR IGNORE INTO tallas_catalogo(tipo,talla,orden) VALUES(?,?,?)", (tipo,talla,orden))
                     except: pass
     except Exception as e:
         pass  # ya existían las columnas
