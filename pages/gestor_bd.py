@@ -8,12 +8,12 @@ TABLAS = ["categorias","productos","inventario","clientes","ventas","venta_items
 EDITABLES = {
     "categorias":        ["nombre","emoji","descripcion"],
     "productos":         ["nombre","precio","categoria_id","emoji","codigo_barras","descripcion"],
-    "inventario":        ["producto_id","localidad","cantidad","min_stock","max_stock"],
+    "inventario":        ["producto_id","talla","localidad","cantidad","min_stock","max_stock"],
     "clientes":          ["nombre","telefono","email","rfc","direccion","notas"],
     "ventas":            ["folio","fecha","cliente_id","subtotal","impuesto","total","metodo_pago","estado","notas"],
-    "venta_items":       ["venta_id","producto_id","cantidad","precio_unitario","subtotal"],
+    "venta_items":       ["venta_id","producto_id","talla","cantidad","precio_unitario","subtotal"],
     "apartados":         ["folio","fecha_apartado","fecha_limite","cliente_id","total_venta","anticipo","abonado","saldo","estado","notas"],
-    "apartado_items":    ["apartado_id","producto_id","cantidad","precio_unitario","subtotal"],
+    "apartado_items":    ["apartado_id","producto_id","talla","cantidad","precio_unitario","subtotal"],
     "apartado_abonos":   ["apartado_id","fecha","monto","metodo_pago","notas"],
     "config":            ["valor"],
 }

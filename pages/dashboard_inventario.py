@@ -81,6 +81,24 @@ def render():
             st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar":False})
 
     st.divider()
+    st.subheader("📏 Stock por Talla")
+    from database import TALLAS
+    tallas_stats = q("""
+        SELECT i.talla, SUM(i.cantidad) as total,
+               SUM(CASE WHEN i.cantidad=0 THEN 1 ELSE 0 END) as agotados,
+               SUM(CASE WHEN i.cantidad>0 AND i.cantidad<=i.min_stock THEN 1 ELSE 0 END) as bajos
+        FROM inventario i WHERE i.talla != 'Única'
+        GROUP BY i.talla ORDER BY i.talla
+    """)
+    if tallas_stats:
+        tcols = st.columns(len(tallas_stats))
+        for i,t in enumerate(tallas_stats):
+            status = "🔴" if t['agotados']>0 else ("🟡" if t['bajos']>0 else "🟢")
+            tcols[i].metric(f"Talla {t['talla']}", f"{t['total']} uds",
+                            delta=f"{t['agotados']} agot. / {t['bajos']} bajos" if (t['agotados']+t['bajos'])>0 else "✅ OK",
+                            delta_color="inverse" if (t['agotados']+t['bajos'])>0 else "normal")
+
+    st.divider()
     st.subheader("Inventario completo")
     if inv:
         df_full = pd.DataFrame(inv)
@@ -90,9 +108,18 @@ def render():
         df_full['Estado']      = df_full.apply(lambda r:
             '❌ Sin Stock' if r['cantidad']==0 else
             ('⚠️ Stock Bajo' if r['cantidad']<=r['min_stock'] else '✅ Normal'), axis=1)
-        st.dataframe(
-            df_full[['Producto','categoria','localidad','cantidad','min_stock','max_stock','Precio','Valor Stock','Estado']]
-            .rename(columns={'categoria':'Categoría','localidad':'Localidad',
-                             'cantidad':'Cantidad','min_stock':'Mín','max_stock':'Máx'}),
-            use_container_width=True, hide_index=True
-        )
+        inv_full = q("""
+            SELECT p.emoji||' '||p.nombre as Producto, c.nombre as Categoría,
+                   i.talla as Talla, i.localidad as Localidad,
+                   i.cantidad as Cantidad, i.min_stock as Mín, i.max_stock as Máx,
+                   '$'||printf('%.2f',p.precio) as Precio,
+                   '$'||printf('%.2f',p.precio*i.cantidad) as "Valor Stock",
+                   CASE WHEN i.cantidad=0 THEN '❌ Sin Stock'
+                        WHEN i.cantidad<=i.min_stock THEN '⚠️ Stock Bajo'
+                        ELSE '✅ Normal' END as Estado
+            FROM inventario i JOIN productos p ON p.id=i.producto_id
+            LEFT JOIN categorias c ON c.id=p.categoria_id
+            ORDER BY p.nombre, i.talla
+        """)
+        import pandas as pd
+        st.dataframe(pd.DataFrame(inv_full), use_container_width=True, hide_index=True)

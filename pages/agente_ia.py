@@ -148,6 +148,33 @@ def build_context() -> str:
     # Valor inventario
     val = q("SELECT COALESCE(SUM(p.precio*i.cantidad),0) as v FROM inventario i JOIN productos p ON p.id=i.producto_id")[0]
 
+    # Ventas por talla
+    tallas_ventas = q("""
+        SELECT vi.talla, SUM(vi.cantidad) as u, SUM(vi.subtotal) as ing,
+               COUNT(DISTINCT vi.venta_id) as n_ventas
+        FROM venta_items vi JOIN ventas v ON v.id=vi.venta_id AND v.estado='Completada'
+        WHERE vi.talla != 'Única'
+        GROUP BY vi.talla ORDER BY u DESC
+    """)
+
+    # Stock por talla (resumen)
+    stock_tallas = q("""
+        SELECT i.talla, SUM(i.cantidad) as total,
+               SUM(CASE WHEN i.cantidad=0 THEN 1 ELSE 0 END) as agotados,
+               SUM(CASE WHEN i.cantidad>0 AND i.cantidad<=i.min_stock THEN 1 ELSE 0 END) as bajos
+        FROM inventario i WHERE i.talla != 'Única'
+        GROUP BY i.talla ORDER BY total DESC
+    """)
+
+    # Top producto+talla
+    top_prod_talla = q("""
+        SELECT p.nombre, vi.talla, SUM(vi.cantidad) as u, SUM(vi.subtotal) as ing
+        FROM venta_items vi JOIN productos p ON p.id=vi.producto_id
+        JOIN ventas v ON v.id=vi.venta_id AND v.estado='Completada'
+        WHERE vi.talla != 'Única'
+        GROUP BY p.id, vi.talla ORDER BY u DESC LIMIT 10
+    """)
+
     # Ventas recientes detalladas (últimas 10)
     recientes = q("""
         SELECT v.folio, DATE(v.fecha) as fecha, v.total,
@@ -216,6 +243,15 @@ Cuando te pregunten por días, meses, tendencias o rankings, SIEMPRE usa los dat
   Valor total del inventario: ${float(val['v']):,.2f}
   Total productos en catálogo: {q("SELECT COUNT(*) as n FROM productos")[0]['n']}
   Total clientes registrados : {q("SELECT COUNT(*) as n FROM clientes")[0]['n']}
+
+=== VENTAS POR TALLA (histórico) ===
+{"".join([f"  {r['talla']:6s}: {r['u']} uds vendidas / ${float(r['ing']):,.2f} ({r['n_ventas']} ventas)\n" for r in tallas_ventas]) or "  Sin datos de tallas"}
+
+=== STOCK ACTUAL POR TALLA ===
+{"".join([f"  {r['talla']:6s}: {r['total']} uds | {r['agotados']} agotados | {r['bajos']} stock bajo\n" for r in stock_tallas]) or "  Sin datos"}
+
+=== TOP 10 PRODUCTO + TALLA MÁS VENDIDOS ===
+{"".join([f"  {r['nombre']} talla {r['talla']}: {r['u']} uds / ${float(r['ing']):,.2f}\n" for r in top_prod_talla]) or "  Sin datos"}
 """
 
 

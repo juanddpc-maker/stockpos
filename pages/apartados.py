@@ -191,6 +191,7 @@ def _detalle_items(apartado_id):
     if items:
         df = pd.DataFrame([{
             'Producto': f"{i['emoji']} {i['nombre']}",
+            'Talla': i.get('talla','—'),
             'Cant.': i['cantidad'],
             'Precio': f"${float(i['precio_unitario']):,.2f}",
             'Subtotal': f"${float(i['subtotal']):,.2f}",
