@@ -259,19 +259,21 @@ def render():
                     col_preview.caption("Vista previa (primeras 3 filas):")
                     col_preview.dataframe(pd.DataFrame(preview), use_container_width=True, hide_index=True)
 
-                st.markdown("**Para confirmar escribe el nombre de la tabla:**")
-                confirm_input = st.text_input(
-                    f"Escribe **{tabla}** para confirmar",
+                st.markdown(f"**Para confirmar escribe:** `{tabla}`")
+                confirm_key = f"confirm_purge_{tabla}"
+                st.text_input(
+                    f"Confirmación",
                     placeholder=f"Escribe: {tabla}",
-                    key=f"confirm_purge_{tabla}",
+                    key=confirm_key,
                     label_visibility="collapsed"
                 )
 
                 btn_col, _ = st.columns([1,3])
                 if btn_col.button(f"🧹 Depurar tabla `{tabla}`", key=f"btn_purge_{tabla}",
                                   type="primary", use_container_width=True):
-                    if confirm_input.strip() != tabla:
-                        st.error(f"❌ El texto no coincide. Debes escribir exactamente: **{tabla}**")
+                    typed = st.session_state.get(confirm_key, "").strip()
+                    if typed != tabla:
+                        st.error(f"❌ Escribiste **'{typed}'** pero se necesita exactamente: **{tabla}**")
                     else:
                         # Cascada de borrado según dependencias
                         try:
@@ -306,15 +308,16 @@ def render():
         st.error("Esto elimina **absolutamente todos los datos** de todas las tablas. "
                  "La app volverá a su estado inicial con datos de muestra al reiniciar.")
 
-        confirm_all = st.text_input(
-            "Escribe **RESET COMPLETO** para confirmar",
+        st.text_input(
+            "Escribe RESET COMPLETO para confirmar",
             placeholder="RESET COMPLETO",
             key="confirm_reset_all",
             label_visibility="collapsed"
         )
         if st.button("💣 Reset completo de la base de datos", type="primary"):
-            if confirm_all.strip() != "RESET COMPLETO":
-                st.error("❌ Debes escribir exactamente: **RESET COMPLETO**")
+            typed_all = st.session_state.get("confirm_reset_all", "").strip()
+            if typed_all != "RESET COMPLETO":
+                st.error(f"❌ Escribiste **'{typed_all}'** pero se necesita exactamente: **RESET COMPLETO**")
             else:
                 try:
                     orden = ["apartado_abonos","apartado_items","apartados",
