@@ -215,50 +215,9 @@ def get_tallas(tipo_talla):
 
 
 def _seed_if_empty(conn, cur):
-    """
-    Seeds tables safely:
-    - Catalog tables (tallas, categorias, productos, inventario, clientes, config):
-      seeded whenever empty — safe to reseed after purge.
-    - Operational tables (ventas, venta_items, apartados*):
-      ONLY seeded on a completely fresh DB (when categorias is also empty).
-      If the user purged ventas intentionally, we do NOT recreate them.
-    """
-    def count(table):
-        cur.execute(f"SELECT COUNT(*) FROM {table}")
-        row = cur.fetchone()
-        return list(row.values())[0] if isinstance(row, dict) else row[0]
-
-    # Always seed catalog/config tables if empty
-    if count("tallas_catalogo") == 0:
-        _seed_tallas(conn, cur)
-    if count("categorias") == 0:
-        _seed_categorias(conn, cur)
-    if count("productos") == 0:
-        _seed_productos(conn, cur)
-    if count("inventario") == 0:
-        _seed_inventario(conn, cur)
-    if count("clientes") == 0:
-        _seed_clientes(conn, cur)
+    """Solo siembra config si no existe. Nada más.
+    El usuario controla sus datos — no se auto-rellena nada."""
     _seed_config(conn, cur)
-
-    # Operational data: ONLY seed if this looks like a completely fresh DB
-    # (categorias was also empty before we seeded it above)
-    # We detect "fresh DB" by checking that productos was just seeded (count > 0 now but clientes was 0)
-    # Simple approach: only seed ventas if BOTH ventas AND productos were just created together
-    # We use a config flag to track if initial seed was done
-    cur.execute("SELECT valor FROM config WHERE clave='_initial_seed_done'")
-    row = cur.fetchone()
-    already_seeded = row is not None
-
-    if not already_seeded and count("ventas") == 0:
-        _seed_ventas(conn, cur)
-        # Mark as done so we never auto-seed ventas again
-        if USE_PG:
-            cur.execute("INSERT INTO config(clave,valor) VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                        ('_initial_seed_done','1'))
-        else:
-            cur.execute("INSERT OR IGNORE INTO config(clave,valor) VALUES(?,?)",
-                        ('_initial_seed_done','1'))
 
 
 
