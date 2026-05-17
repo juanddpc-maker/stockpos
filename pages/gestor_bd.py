@@ -43,8 +43,8 @@ def render():
     c1.info(f"{info['icono']} **Motor:** {info['motor']}  |  `{info['url']}`")
     c2.success("🟢 Producción" if info['prod'] else "🔵 Desarrollo")
 
-    tab_exp, tab_edit, tab_ins, tab_del, tab_sql, tab_csv = st.tabs([
-        "📋 Explorar", "✏️ Editar", "➕ Insertar", "🗑️ Eliminar", "💻 SQL", "⬇️ CSV"
+    tab_exp, tab_edit, tab_ins, tab_del, tab_sql, tab_csv, tab_purge = st.tabs([
+        "📋 Explorar", "✏️ Editar", "➕ Insertar", "🗑️ Eliminar", "💻 SQL", "⬇️ CSV", "🧹 Depurar Tablas"
     ])
 
     # ── EXPLORAR ─────────────────────────────────────────────────────────────
@@ -209,3 +209,121 @@ def render():
                                     key=f"dl_{t}", use_container_width=True)
             else:
                 rc2.caption("vacía")
+
+    # ── DEPURAR TABLAS ────────────────────────────────────────────────────────
+    with tab_purge:
+        st.subheader("🧹 Depurar Tablas")
+        st.error(
+            "⚠️ **ZONA DE PELIGRO** — Estas operaciones eliminan datos permanentemente y no se pueden deshacer. "
+            "Se recomienda exportar un CSV antes de proceder."
+        )
+
+        # Tabla seleccionable con info de filas y descripción de riesgo
+        TABLA_DESCRIPCIONES = {
+            "categorias":       ("🗂️", "Categorías de productos",                  "alto",   "Elimina todas las categorías. Los productos quedarán sin categoría."),
+            "productos":        ("👔", "Catálogo completo de productos",            "alto",   "Elimina todos los productos, su inventario y aparecerán como NULL en ventas."),
+            "inventario":       ("🗄️", "Todo el stock registrado",                  "alto",   "Elimina todos los registros de stock. Los productos quedan con inventario en cero."),
+            "clientes":         ("👥", "Base de clientes",                           "medio",  "Elimina todos los clientes. Las ventas quedan como Público General."),
+            "ventas":           ("🧾", "Historial completo de ventas",              "alto",   "Elimina todo el historial de ventas y sus líneas de detalle."),
+            "venta_items":      ("📋", "Líneas de detalle de ventas",               "medio",  "Elimina el detalle de productos por venta. Las ventas quedan sin desglose."),
+            "apartados":        ("💼", "Todos los apartados (activos e historial)",  "alto",   "Elimina apartados, sus items y abonos."),
+            "apartado_items":   ("📦", "Productos de apartados",                    "medio",  "Elimina el detalle de productos por apartado."),
+            "apartado_abonos":  ("💵", "Historial de abonos",                       "medio",  "Elimina todos los abonos registrados."),
+            "config":           ("⚙️", "Configuración del sistema",                 "critico","Elimina nombre de app, IVA, API keys y toda la config. La app vuelve a valores por defecto."),
+            "tallas_catalogo":  ("📏", "Catálogo de tallas",                        "medio",  "Elimina el catálogo de tallas. Los productos conservan su tipo_talla pero sin referencia."),
+        }
+
+        RIESGO_COLOR = {"medio": "🟡", "alto": "🔴", "critico": "⛔"}
+
+        st.markdown("---")
+        st.markdown("### Selecciona la tabla a depurar")
+
+        for tabla, (emoji, desc, riesgo, advertencia) in TABLA_DESCRIPCIONES.items():
+            total = q(f"SELECT COUNT(*) as n FROM {tabla}")[0]['n']
+            if total == 0:
+                with st.expander(f"{emoji} **{tabla}** · 0 filas · ✅ Ya está vacía"):
+                    st.caption("Esta tabla no tiene datos.")
+                continue
+
+            riesgo_icon = RIESGO_COLOR[riesgo]
+            with st.expander(f"{emoji} **{tabla}** · {total} fila(s) · {riesgo_icon} Riesgo {riesgo.upper()}"):
+                st.markdown(f"**{desc}**")
+                st.warning(f"⚠️ {advertencia}")
+
+                col_info, col_preview = st.columns([1,2])
+                col_info.metric("Filas a eliminar", total)
+
+                # Preview (primeras 3 filas)
+                preview = q(f"SELECT * FROM {tabla} LIMIT 3")
+                if preview:
+                    col_preview.caption("Vista previa (primeras 3 filas):")
+                    col_preview.dataframe(pd.DataFrame(preview), use_container_width=True, hide_index=True)
+
+                st.markdown("**Para confirmar escribe el nombre de la tabla:**")
+                confirm_input = st.text_input(
+                    f"Escribe **{tabla}** para confirmar",
+                    placeholder=f"Escribe: {tabla}",
+                    key=f"confirm_purge_{tabla}",
+                    label_visibility="collapsed"
+                )
+
+                btn_col, _ = st.columns([1,3])
+                if btn_col.button(f"🧹 Depurar tabla `{tabla}`", key=f"btn_purge_{tabla}",
+                                  type="primary", use_container_width=True):
+                    if confirm_input.strip() != tabla:
+                        st.error(f"❌ El texto no coincide. Debes escribir exactamente: **{tabla}**")
+                    else:
+                        # Cascada de borrado según dependencias
+                        try:
+                            if tabla == "productos":
+                                run("DELETE FROM apartado_items")
+                                run("DELETE FROM venta_items")
+                                run("DELETE FROM inventario")
+                                run("DELETE FROM productos")
+                            elif tabla == "ventas":
+                                run("DELETE FROM venta_items")
+                                run("DELETE FROM ventas")
+                            elif tabla == "apartados":
+                                run("DELETE FROM apartado_abonos")
+                                run("DELETE FROM apartado_items")
+                                run("DELETE FROM apartados")
+                            elif tabla == "categorias":
+                                run("UPDATE productos SET categoria_id=NULL")
+                                run("DELETE FROM categorias")
+                            elif tabla == "clientes":
+                                run("UPDATE ventas SET cliente_id=NULL")
+                                run("UPDATE apartados SET cliente_id=NULL")
+                                run("DELETE FROM clientes")
+                            else:
+                                run(f"DELETE FROM {tabla}")
+                            st.success(f"✅ Tabla **{tabla}** depurada correctamente. {total} fila(s) eliminada(s).")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al depurar: {e}")
+
+        st.markdown("---")
+        st.markdown("### 💣 Depurar TODO (Reset completo)")
+        st.error("Esto elimina **absolutamente todos los datos** de todas las tablas. "
+                 "La app volverá a su estado inicial con datos de muestra al reiniciar.")
+
+        confirm_all = st.text_input(
+            "Escribe **RESET COMPLETO** para confirmar",
+            placeholder="RESET COMPLETO",
+            key="confirm_reset_all",
+            label_visibility="collapsed"
+        )
+        if st.button("💣 Reset completo de la base de datos", type="primary"):
+            if confirm_all.strip() != "RESET COMPLETO":
+                st.error("❌ Debes escribir exactamente: **RESET COMPLETO**")
+            else:
+                try:
+                    orden = ["apartado_abonos","apartado_items","apartados",
+                             "venta_items","ventas","inventario",
+                             "productos","categorias","clientes",
+                             "tallas_catalogo","config"]
+                    for t in orden:
+                        run(f"DELETE FROM {t}")
+                    st.success("✅ Reset completo realizado. Reinicia la app para cargar los datos de muestra.")
+                    st.info("💡 Para recargar los datos de muestra, reinicia la app o haz un nuevo deploy.")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
