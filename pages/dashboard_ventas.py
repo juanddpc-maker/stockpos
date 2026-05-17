@@ -4,63 +4,101 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
 from database import q
 
+
+def _preset_fechas(preset, today):
+    ayer = today - timedelta(days=1)
+    if preset == "Hoy":
+        return today, today
+    elif preset == "Ayer":
+        return ayer, ayer
+    elif preset == "Esta semana":
+        return today - timedelta(days=today.weekday()), today
+    elif preset == "Últimos 7 días":
+        return today - timedelta(days=6), today
+    elif preset == "Últimos 14 días":
+        return today - timedelta(days=13), today
+    elif preset == "Este mes":
+        return today.replace(day=1), today
+    elif preset == "Últimos 30 días":
+        return today - timedelta(days=29), today
+    elif preset == "Últimos 90 días":
+        return today - timedelta(days=89), today
+    elif preset == "Todo el historial":
+        primera = q("SELECT DATE(MIN(fecha)) as d FROM ventas WHERE estado='Completada'")
+        d0 = primera[0]['d'] if primera and primera[0]['d'] else None
+        return (date.fromisoformat(d0) if d0 else today - timedelta(days=30)), today
+    return today - timedelta(days=13), today   # default
+
+
 def render():
     st.header("📊 Dashboard de Ventas")
-
     today = datetime.now().date()
-    ayer  = today - timedelta(days=1)
 
-    # ── Filtro de rango de fechas ─────────────────────────────────────────────
-    with st.expander("📅 Rango de fechas", expanded=True):
-        rc1, rc2, rc3 = st.columns([2, 2, 3])
+    # ── Selector de período ───────────────────────────────────────────────────
+    PRESETS = [
+        "Últimos 14 días","Hoy","Ayer","Esta semana",
+        "Últimos 7 días","Este mes","Últimos 30 días",
+        "Últimos 90 días","Todo el historial","Personalizado",
+    ]
 
-        # Presets rápidos
-        preset = rc3.selectbox(
-            "Período rápido",
-            ["Personalizado","Hoy","Ayer","Esta semana","Últimos 7 días",
-             "Últimos 14 días","Este mes","Últimos 30 días","Últimos 90 días","Todo el historial"],
-            index=5,  # default: Últimos 14 días
+    # Inicializar session_state
+    if "dash_preset" not in st.session_state:
+        st.session_state.dash_preset = "Últimos 14 días"
+    if "dash_ini" not in st.session_state:
+        st.session_state.dash_ini, st.session_state.dash_fin = _preset_fechas("Últimos 14 días", today)
+
+    with st.expander("📅 Filtro de período", expanded=True):
+        col_preset, col_ini, col_fin = st.columns([3, 2, 2])
+
+        preset_sel = col_preset.selectbox(
+            "Período",
+            PRESETS,
+            index=PRESETS.index(st.session_state.dash_preset),
             label_visibility="collapsed",
+            key="dash_preset_sel",
         )
 
-        # Calcular fechas según preset
-        if preset == "Hoy":
-            default_ini, default_fin = today, today
-        elif preset == "Ayer":
-            default_ini, default_fin = ayer, ayer
-        elif preset == "Esta semana":
-            default_ini = today - timedelta(days=today.weekday())
-            default_fin = today
-        elif preset == "Últimos 7 días":
-            default_ini, default_fin = today - timedelta(days=6), today
-        elif preset == "Últimos 14 días":
-            default_ini, default_fin = today - timedelta(days=13), today
-        elif preset == "Este mes":
-            default_ini = today.replace(day=1)
-            default_fin = today
-        elif preset == "Últimos 30 días":
-            default_ini, default_fin = today - timedelta(days=29), today
-        elif preset == "Últimos 90 días":
-            default_ini, default_fin = today - timedelta(days=89), today
-        elif preset == "Todo el historial":
-            primera = q("SELECT DATE(MIN(fecha)) as d FROM ventas WHERE estado='Completada'")
-            default_ini = date.fromisoformat(primera[0]['d']) if primera and primera[0]['d'] else today - timedelta(days=30)
-            default_fin = today
-        else:  # Personalizado — mantiene lo que el usuario escriba
-            default_ini = today - timedelta(days=13)
-            default_fin = today
+        # Si cambió el preset (y no es Personalizado) → recalcular fechas
+        if preset_sel != st.session_state.dash_preset:
+            st.session_state.dash_preset = preset_sel
+            if preset_sel != "Personalizado":
+                ini, fin = _preset_fechas(preset_sel, today)
+                st.session_state.dash_ini = ini
+                st.session_state.dash_fin = fin
+            st.rerun()
 
-        fecha_ini = rc1.date_input("Desde", value=default_ini, max_value=today, key="dash_fecha_ini")
-        fecha_fin = rc2.date_input("Hasta", value=default_fin, max_value=today, key="dash_fecha_fin")
+        # Date pickers — siempre reflejan session_state
+        nueva_ini = col_ini.date_input(
+            "Desde", value=st.session_state.dash_ini,
+            max_value=today, key="dash_ini_pick",
+        )
+        nueva_fin = col_fin.date_input(
+            "Hasta", value=st.session_state.dash_fin,
+            max_value=today, key="dash_fin_pick",
+        )
 
-        if fecha_ini > fecha_fin:
-            st.error("⚠️ La fecha de inicio no puede ser mayor a la fecha final")
-            return
+        # Si el usuario ajusta las fechas manualmente → modo Personalizado
+        if nueva_ini != st.session_state.dash_ini or nueva_fin != st.session_state.dash_fin:
+            st.session_state.dash_ini    = nueva_ini
+            st.session_state.dash_fin    = nueva_fin
+            st.session_state.dash_preset = "Personalizado"
+            st.rerun()
+
+    fecha_ini = st.session_state.dash_ini
+    fecha_fin = st.session_state.dash_fin
+
+    if fecha_ini > fecha_fin:
+        st.error("⚠️ La fecha de inicio no puede ser mayor a la fecha final")
+        return
 
     dias_rango = (fecha_fin - fecha_ini).days + 1
-    st.caption(f"Mostrando {dias_rango} día(s): {fecha_ini.strftime('%d/%m/%Y')} → {fecha_fin.strftime('%d/%m/%Y')}")
+    st.caption(
+        f"📅 **{st.session_state.dash_preset}** · "
+        f"{fecha_ini.strftime('%d/%m/%Y')} → {fecha_fin.strftime('%d/%m/%Y')} "
+        f"({dias_rango} día(s))"
+    )
 
-    # ── KPIs del rango seleccionado ───────────────────────────────────────────
+    # ── Helpers de query ──────────────────────────────────────────────────────
     def kpi_rng(d_ini, d_fin):
         r = q("SELECT COALESCE(SUM(total),0) as t, COUNT(*) as n FROM ventas "
               "WHERE estado='Completada' AND DATE(fecha)>=? AND DATE(fecha)<=?",
@@ -72,13 +110,13 @@ def render():
               "WHERE estado='Completada' AND DATE(fecha)=?", (str(d),))
         return float(r[0]['t']), int(r[0]['n'])
 
+    # ── KPIs ──────────────────────────────────────────────────────────────────
     t_rng,  n_rng  = kpi_rng(fecha_ini, fecha_fin)
     t_hoy,  n_hoy  = kpi_day(today)
-    t_ayer, n_ayer = kpi_day(ayer)
+    t_ayer, n_ayer = kpi_day(today - timedelta(days=1))
 
-    # Período anterior para comparar
-    delta = timedelta(days=dias_rango)
-    t_prev, n_prev = kpi_rng(fecha_ini - delta, fecha_fin - delta)
+    delta      = timedelta(days=dias_rango)
+    t_prev, n_prev = kpi_rng(fecha_ini - delta, fecha_ini - timedelta(days=1))
 
     ticket_rng  = t_rng  / n_rng  if n_rng  else 0
     ticket_prev = t_prev / n_prev if n_prev else 0
@@ -86,44 +124,34 @@ def render():
     apt = q("SELECT COUNT(*) as n, COALESCE(SUM(saldo),0) as s FROM apartados WHERE estado='Apartado'")[0]
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("💰 Ventas (período)",
-              f"${t_rng:,.2f}",
-              f"{((t_rng-t_prev)/t_prev*100):+.1f}% vs período ant." if t_prev else "—")
-    c2.metric("🧾 Transacciones",
-              n_rng,
-              f"{n_rng-n_prev:+d} vs período ant." if n_prev else "—")
-    c3.metric("📊 Ticket Promedio",
-              f"${ticket_rng:,.2f}",
+    c1.metric("💰 Ventas período",    f"${t_rng:,.2f}",
+              f"{((t_rng-t_prev)/t_prev*100):+.1f}% vs ant." if t_prev else "—")
+    c2.metric("🧾 Transacciones",     n_rng,
+              f"{n_rng-n_prev:+d} vs ant." if n_prev else "—")
+    c3.metric("📊 Ticket Promedio",   f"${ticket_rng:,.2f}",
               f"{((ticket_rng-ticket_prev)/ticket_prev*100):+.1f}%" if ticket_prev else "—")
     c4.metric("💼 Apartados activos", apt['n'])
     c5.metric("💵 Por cobrar",        f"${float(apt['s']):,.2f}")
 
     st.divider()
 
-    # ── Gráfica de barras por día en el rango ─────────────────────────────────
+    # ── Gráfica de barras ─────────────────────────────────────────────────────
     col_bar, col_pie = st.columns([3, 2])
 
     with col_bar:
-        st.subheader(f"Ventas por día ({fecha_ini.strftime('%d/%m')} – {fecha_fin.strftime('%d/%m/%Y')})")
-        labels, vals = [], []
+        st.subheader(f"Ventas por día · {fecha_ini.strftime('%d/%m')} – {fecha_fin.strftime('%d/%m/%Y')}")
+        labels, vals, colors = [], [], []
         d = fecha_ini
         while d <= fecha_fin:
             r = q("SELECT COALESCE(SUM(total),0) as t FROM ventas "
                   "WHERE estado='Completada' AND DATE(fecha)=?", (str(d),))
             labels.append(d.strftime("%d/%m"))
             vals.append(float(r[0]['t']))
-            d += timedelta(days=1)
-
-        # Color: hoy en naranja, resto en azul
-        colors = []
-        d = fecha_ini
-        while d <= fecha_fin:
             colors.append("#f6ad55" if d == today else "#4299e1")
             d += timedelta(days=1)
 
         fig = go.Figure(go.Bar(
-            x=labels, y=vals,
-            marker_color=colors,
+            x=labels, y=vals, marker_color=colors,
             hovertemplate="<b>%{x}</b><br>$%{y:,.2f}<extra></extra>",
         ))
         fig.update_layout(
@@ -155,18 +183,18 @@ def render():
             fig2.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=260, showlegend=False)
             st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
         else:
-            st.info("Sin ventas en el período seleccionado")
+            st.info("Sin ventas en el período")
 
     st.divider()
 
-    # ── Tablas del período ────────────────────────────────────────────────────
+    # ── Tablas ────────────────────────────────────────────────────────────────
     col_ul, col_top = st.columns(2)
 
     with col_ul:
         st.subheader(f"Ventas del período ({n_rng})")
         rows = q("""
             SELECT v.folio, COALESCE(c.nombre,'Público General') as cliente,
-                   v.total, v.metodo_pago, v.estado, SUBSTR(v.fecha,1,16) as fecha
+                   v.total, v.metodo_pago, SUBSTR(v.fecha,1,16) as fecha
             FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
             WHERE v.estado='Completada'
               AND DATE(v.fecha)>=? AND DATE(v.fecha)<=?
@@ -176,7 +204,7 @@ def render():
         if rows:
             df = pd.DataFrame(rows)
             df['total'] = df['total'].apply(lambda x: f"${float(x):,.2f}")
-            df.columns = ['Folio','Cliente','Total','Pago','Estado','Fecha']
+            df.columns = ['Folio','Cliente','Total','Pago','Fecha']
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("Sin ventas en el período")
@@ -203,9 +231,9 @@ def render():
         else:
             st.info("Sin ventas en el período")
 
-    # ── Resumen por método de pago ────────────────────────────────────────────
+    # ── Por método de pago ────────────────────────────────────────────────────
     st.divider()
-    st.subheader("💳 Ventas por método de pago")
+    st.subheader("💳 Por método de pago")
     metodos = q("""
         SELECT metodo_pago, COUNT(*) as n, SUM(total) as total
         FROM ventas
@@ -214,10 +242,9 @@ def render():
     """, (str(fecha_ini), str(fecha_fin)))
 
     if metodos:
-        mc = st.columns(len(metodos))
+        mc = st.columns(min(len(metodos), 5))
         for i, m in enumerate(metodos):
-            mc[i].metric(m['metodo_pago'],
-                         f"${float(m['total']):,.2f}",
+            mc[i].metric(m['metodo_pago'], f"${float(m['total']):,.2f}",
                          f"{m['n']} transacción(es)")
     else:
         st.info("Sin datos en el período")
