@@ -249,17 +249,23 @@ def _card_apartado(a, collapsed=True, tab_ctx=""):
 
 def _detalle_items(apartado_id):
     items = q("""
-        SELECT ai.cantidad, ai.precio_unitario, ai.subtotal, p.nombre, p.emoji
-        FROM apartado_items ai JOIN productos p ON p.id=ai.producto_id
+        SELECT ai.cantidad, ai.precio_unitario, ai.subtotal,
+               ai.talla,
+               p.nombre, p.emoji,
+               c.nombre as categoria, c.emoji as cat_emoji
+        FROM apartado_items ai
+        JOIN productos p ON p.id=ai.producto_id
+        LEFT JOIN categorias c ON c.id=p.categoria_id
         WHERE ai.apartado_id=?
     """, (apartado_id,))
     if items:
         df = pd.DataFrame([{
-            'Producto': f"{i['emoji']} {i['nombre']}",
-            'Talla': i.get('talla','—'),
-            'Cant.': i['cantidad'],
-            'Precio': f"${float(i['precio_unitario']):,.2f}",
-            'Subtotal': f"${float(i['subtotal']):,.2f}",
+            'Categoría': f"{i['cat_emoji'] or ''} {i['categoria'] or '—'}",
+            'Producto':  f"{i['emoji']} {i['nombre']}",
+            'Talla':     i['talla'] if i.get('talla') and i['talla'] != 'Única' else '—',
+            'Cant.':     i['cantidad'],
+            'Precio':    f"${float(i['precio_unitario']):,.2f}",
+            'Subtotal':  f"${float(i['subtotal']):,.2f}",
         } for i in items])
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
