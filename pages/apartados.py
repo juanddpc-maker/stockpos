@@ -41,13 +41,29 @@ def _vencidos():
 
 
 def _tab_activos():
+    # Filtros
+    f1, f2 = st.columns(2)
+    buscar_folio  = f1.text_input("🔍 Folio", placeholder="Ej: A-1001",
+                                   label_visibility="collapsed", key="act_folio")
+    buscar_client = f2.text_input("👤 Cliente", placeholder="Nombre del cliente",
+                                   label_visibility="collapsed", key="act_client")
+
     rows = q("""
         SELECT a.*, c.nombre as cliente_nombre
         FROM apartados a LEFT JOIN clientes c ON c.id=a.cliente_id
         WHERE a.estado='Apartado' ORDER BY a.fecha_apartado DESC
     """)
+
+    if buscar_folio:
+        rows = [r for r in rows if buscar_folio.lower() in r['folio'].lower()]
+    if buscar_client:
+        rows = [r for r in rows if buscar_client.lower() in (r['cliente_nombre'] or '').lower()]
+
+    st.caption(f"{len(rows)} apartado(s) encontrado(s)")
+
     if not rows:
-        st.info("No hay apartados activos 🎉")
+        st.info("No hay apartados activos 🎉" if not buscar_folio and not buscar_client
+                else "Sin resultados con ese filtro")
         return
     for a in rows:
         _card_apartado(a, tab_ctx="activos")
@@ -55,24 +71,45 @@ def _tab_activos():
 
 def _tab_vencer():
     dias = int(get_config("apartado_dias_alerta","7"))
-    st.caption(f"Apartados que vencen en los próximos {dias} días o ya vencieron")
+
+    # Filtros
+    f1, f2, f3 = st.columns(3)
+    buscar_folio  = f1.text_input("🔍 Folio", placeholder="Ej: A-1001",
+                                   label_visibility="collapsed", key="ven_folio")
+    buscar_client = f2.text_input("👤 Cliente", placeholder="Nombre del cliente",
+                                   label_visibility="collapsed", key="ven_client")
+    nuevo_dias = f3.number_input("⚠️ Días de alerta", min_value=1, value=dias,
+                                  key="ven_dias",
+                                  help="Apartados que vencen en estos días o ya vencieron")
+    if nuevo_dias != dias:
+        from database import set_config
+        set_config("apartado_dias_alerta", str(nuevo_dias))
 
     hoy    = datetime.now()
-    limite = (hoy + timedelta(days=dias)).isoformat()
-    rows   = q("""
+    limite = (hoy + timedelta(days=nuevo_dias)).isoformat()
+    st.caption(f"Apartados que vencen en los próximos {nuevo_dias} días o ya vencieron")
+
+    rows = q("""
         SELECT a.*, c.nombre as cliente_nombre
         FROM apartados a LEFT JOIN clientes c ON c.id=a.cliente_id
         WHERE a.estado='Apartado' AND a.fecha_limite IS NOT NULL AND a.fecha_limite <= ?
         ORDER BY a.fecha_limite ASC
     """, (limite,))
 
+    if buscar_folio:
+        rows = [r for r in rows if buscar_folio.lower() in r['folio'].lower()]
+    if buscar_client:
+        rows = [r for r in rows if buscar_client.lower() in (r['cliente_nombre'] or '').lower()]
+
+    st.caption(f"{len(rows)} apartado(s) encontrado(s)")
+
     if not rows:
-        st.success(f"✅ Sin apartados por vencer en los próximos {dias} días")
+        st.success(f"✅ Sin apartados por vencer en los próximos {nuevo_dias} días")
     else:
         for a in rows:
-            fl = a['fecha_limite'][:10] if a['fecha_limite'] else "—"
+            fl      = a['fecha_limite'][:10] if a['fecha_limite'] else "—"
             vencido = a['fecha_limite'] and a['fecha_limite'][:10] < hoy.strftime('%Y-%m-%d')
-            label = "🔴 VENCIDO" if vencido else "🟡 Por vencer"
+            label   = "🔴 VENCIDO" if vencido else "🟡 Por vencer"
             st.markdown(f"**{label}** · Folio {a['folio']} · Vence: {fl}")
             _card_apartado(a, collapsed=False, tab_ctx="vencer")
 
@@ -109,24 +146,52 @@ def _tab_vencer():
 
 
 def _tab_historial():
+    # Filtros
+    h1, h2, h3 = st.columns(3)
+    buscar_folio  = h1.text_input("🔍 Folio", placeholder="Ej: A-1001",
+                                   label_visibility="collapsed", key="hist_folio")
+    buscar_client = h2.text_input("👤 Cliente", placeholder="Nombre del cliente",
+                                   label_visibility="collapsed", key="hist_client")
+    estado_fil    = h3.selectbox("Estado", ["Todos","Liquidado","Cancelado"],
+                                  label_visibility="collapsed", key="hist_estado")
+
     rows = q("""
         SELECT a.*, c.nombre as cliente_nombre
         FROM apartados a LEFT JOIN clientes c ON c.id=a.cliente_id
         WHERE a.estado IN ('Liquidado','Cancelado')
-        ORDER BY a.fecha_apartado DESC LIMIT 100
+        ORDER BY a.fecha_apartado DESC LIMIT 200
     """)
+
+    if buscar_folio:
+        rows = [r for r in rows if buscar_folio.lower() in r['folio'].lower()]
+    if buscar_client:
+        rows = [r for r in rows if buscar_client.lower() in (r['cliente_nombre'] or '').lower()]
+    if estado_fil != "Todos":
+        rows = [r for r in rows if r['estado'] == estado_fil]
+
     if not rows:
-        st.info("Sin historial aún")
+        st.info("Sin historial con los filtros seleccionados")
         return
+
     liq  = [r for r in rows if r['estado']=='Liquidado']
     canc = [r for r in rows if r['estado']=='Cancelado']
-    c1,c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     c1.metric("✅ Liquidados",  len(liq))
     c2.metric("❌ Cancelados", len(canc))
+    c3.metric("📋 Total",      len(rows))
+
     for a in rows:
         ico = "✅" if a['estado']=='Liquidado' else "❌"
-        with st.expander(f"{ico} **{a['folio']}** · {a['cliente_nombre'] or 'Sin cliente'} · ${float(a['total_venta']):,.2f}"):
-            st.markdown(f"**Estado:** {a['estado']}  \n**Fecha:** {str(a['fecha_apartado'])[:10]}")
+        with st.expander(
+            f"{ico} **{a['folio']}** · "
+            f"{a['cliente_nombre'] or 'Sin cliente'} · "
+            f"${float(a['total_venta']):,.2f} · "
+            f"{str(a['fecha_apartado'])[:10]}"
+        ):
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.markdown(f"**Estado:** {a['estado']}")
+            mc2.markdown(f"**Fecha:** {str(a['fecha_apartado'])[:10]}")
+            mc3.markdown(f"**Total:** ${float(a['total_venta']):,.2f}")
             _detalle_items(a['id'])
 
 
