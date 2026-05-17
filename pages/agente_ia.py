@@ -40,80 +40,182 @@ def get_ai_response(messages: list, provider: str, api_key: str) -> str:
 
 def build_context() -> str:
     from datetime import datetime, timedelta
-    hoy = datetime.now().date()
-    sem = hoy - timedelta(days=7)
+    hoy  = datetime.now().date()
+    sem  = hoy - timedelta(days=7)
+    mes  = hoy.replace(day=1)
+    mes3 = hoy - timedelta(days=90)
 
-    vt  = q("SELECT COALESCE(SUM(total),0) as t, COUNT(*) as n FROM ventas WHERE estado='Completada'")[0]
-    vs  = q("SELECT COALESCE(SUM(total),0) as t, COUNT(*) as n FROM ventas WHERE estado='Completada' AND DATE(fecha)>=?", (str(sem),))[0]
-    vh  = q("SELECT COALESCE(SUM(total),0) as t, COUNT(*) as n FROM ventas WHERE estado='Completada' AND DATE(fecha)=?", (str(hoy),))[0]
+    # Totales generales
+    vt = q("SELECT COALESCE(SUM(total),0) as t, COUNT(*) as n FROM ventas WHERE estado='Completada'")[0]
+    vs = q("SELECT COALESCE(SUM(total),0) as t, COUNT(*) as n FROM ventas WHERE estado='Completada' AND DATE(fecha)>=?", (str(sem),))[0]
+    vh = q("SELECT COALESCE(SUM(total),0) as t, COUNT(*) as n FROM ventas WHERE estado='Completada' AND DATE(fecha)=?", (str(hoy),))[0]
+    vm = q("SELECT COALESCE(SUM(total),0) as t, COUNT(*) as n FROM ventas WHERE estado='Completada' AND DATE(fecha)>=?", (str(mes),))[0]
 
-    low = q("""
-        SELECT p.nombre, i.cantidad, i.min_stock, i.localidad
-        FROM inventario i JOIN productos p ON p.id=i.producto_id
-        WHERE i.cantidad <= i.min_stock ORDER BY i.cantidad
+    # Ventas por día de la semana (histórico completo)
+    dias_semana = q("""
+        SELECT
+          CASE CAST(strftime('%w', fecha) AS INTEGER)
+            WHEN 0 THEN 'Domingo'
+            WHEN 1 THEN 'Lunes'
+            WHEN 2 THEN 'Martes'
+            WHEN 3 THEN 'Miércoles'
+            WHEN 4 THEN 'Jueves'
+            WHEN 5 THEN 'Viernes'
+            WHEN 6 THEN 'Sábado'
+          END as dia,
+          COUNT(*) as transacciones,
+          COALESCE(SUM(total),0) as total,
+          COALESCE(AVG(total),0) as ticket_prom
+        FROM ventas WHERE estado='Completada'
+        GROUP BY strftime('%w', fecha)
+        ORDER BY total DESC
     """)
+
+    # Ventas por día (últimos 30 días)
+    ventas_diarias = q("""
+        SELECT DATE(fecha) as dia,
+               COUNT(*) as n,
+               COALESCE(SUM(total),0) as total
+        FROM ventas WHERE estado='Completada'
+          AND DATE(fecha) >= DATE('now','-30 days')
+        GROUP BY DATE(fecha)
+        ORDER BY dia DESC
+        LIMIT 30
+    """)
+
+    # Ventas por mes (últimos 6 meses)
+    ventas_mes = q("""
+        SELECT strftime('%Y-%m', fecha) as mes,
+               COUNT(*) as n,
+               COALESCE(SUM(total),0) as total
+        FROM ventas WHERE estado='Completada'
+          AND fecha >= DATE('now','-6 months')
+        GROUP BY strftime('%Y-%m', fecha)
+        ORDER BY mes DESC
+    """)
+
+    # Top productos
     top = q("""
-        SELECT p.nombre, SUM(vi.cantidad) as u, SUM(vi.subtotal) as ing
+        SELECT p.nombre, p.emoji,
+               SUM(vi.cantidad) as u,
+               SUM(vi.subtotal) as ing,
+               COUNT(DISTINCT vi.venta_id) as en_ventas
         FROM venta_items vi JOIN productos p ON p.id=vi.producto_id
         JOIN ventas v ON v.id=vi.venta_id AND v.estado='Completada'
-        GROUP BY p.id ORDER BY u DESC LIMIT 8
+        GROUP BY p.id ORDER BY ing DESC LIMIT 10
     """)
+
+    # Productos por categoría
     cats = q("""
-        SELECT c.nombre, COALESCE(SUM(vi.subtotal),0) as total
+        SELECT c.nombre, c.emoji,
+               COUNT(DISTINCT p.id) as n_prod,
+               COALESCE(SUM(vi.subtotal),0) as total,
+               COALESCE(SUM(vi.cantidad),0) as unidades
         FROM categorias c
         LEFT JOIN productos p ON p.categoria_id=c.id
         LEFT JOIN venta_items vi ON vi.producto_id=p.id
         LEFT JOIN ventas v ON v.id=vi.venta_id AND v.estado='Completada'
         GROUP BY c.id ORDER BY total DESC
     """)
-    apt = q("SELECT COUNT(*) as n, COALESCE(SUM(saldo),0) as s, COALESCE(SUM(abonado),0) as a FROM apartados WHERE estado='Apartado'")[0]
-    apt_venc = q("""
-        SELECT COUNT(*) as n FROM apartados
-        WHERE estado='Apartado' AND fecha_limite IS NOT NULL
-          AND fecha_limite < datetime('now')
-    """)[0]
-    val = q("SELECT COALESCE(SUM(p.precio*i.cantidad),0) as v FROM inventario i JOIN productos p ON p.id=i.producto_id")[0]
-    clientes_top = q("""
-        SELECT c.nombre, COUNT(v.id) as compras, COALESCE(SUM(v.total),0) as total
-        FROM clientes c JOIN ventas v ON v.cliente_id=c.id AND v.estado='Completada'
-        GROUP BY c.id ORDER BY total DESC LIMIT 5
+
+    # Stock
+    low = q("""
+        SELECT p.nombre, i.cantidad, i.min_stock, i.max_stock, i.localidad
+        FROM inventario i JOIN productos p ON p.id=i.producto_id
+        WHERE i.cantidad <= i.min_stock ORDER BY i.cantidad
+    """)
+    inv_ok = q("""
+        SELECT p.nombre, i.cantidad, i.localidad
+        FROM inventario i JOIN productos p ON p.id=i.producto_id
+        WHERE i.cantidad > i.min_stock ORDER BY i.cantidad DESC LIMIT 10
     """)
 
-    low_txt  = "\n".join([f"  - {r['nombre']}: {r['cantidad']} uds (mín {r['min_stock']}) — {r['localidad']}" for r in low]) or "  Ninguno"
-    top_txt  = "\n".join([f"  - {r['nombre']}: {r['u']} uds / ${float(r['ing']):,.2f}" for r in top]) or "  Sin ventas"
-    cat_txt  = "\n".join([f"  - {r['nombre']}: ${float(r['total']):,.2f}" for r in cats]) or "  Sin datos"
-    cli_txt  = "\n".join([f"  - {r['nombre']}: {r['compras']} compras / ${float(r['total']):,.2f}" for r in clientes_top]) or "  Sin datos"
+    # Apartados
+    apt      = q("SELECT COUNT(*) as n, COALESCE(SUM(saldo),0) as s, COALESCE(SUM(abonado),0) as a, COALESCE(SUM(total_venta),0) as tv FROM apartados WHERE estado='Apartado'")[0]
+    apt_venc = q("SELECT COUNT(*) as n FROM apartados WHERE estado='Apartado' AND fecha_limite IS NOT NULL AND fecha_limite < datetime('now')")[0]
+    apt_sem  = q("SELECT COUNT(*) as n, COALESCE(SUM(total_venta),0) as t FROM apartados WHERE DATE(fecha_apartado)>=? AND estado IN ('Apartado','Liquidado')", (str(sem),))[0]
 
-    return f"""Hoy es {hoy.strftime('%d/%m/%Y')}. Eres un asistente experto en gestión de negocios de venta de uniformes escolares, deportivos y empresariales.
-Tienes acceso al estado actual del sistema. Responde siempre en español, de forma concisa y accionable.
+    # Clientes
+    clientes_top = q("""
+        SELECT c.nombre, c.telefono,
+               COUNT(v.id) as compras,
+               COALESCE(SUM(v.total),0) as total,
+               MAX(v.fecha) as ultima_compra
+        FROM clientes c JOIN ventas v ON v.cliente_id=c.id AND v.estado='Completada'
+        GROUP BY c.id ORDER BY total DESC LIMIT 8
+    """)
 
-=== VENTAS ===
-  Histórico total : ${float(vt['t']):,.2f} ({vt['n']} transacciones)
-  Esta semana     : ${float(vs['t']):,.2f} ({vs['n']} transacciones)
-  Hoy             : ${float(vh['t']):,.2f} ({vh['n']} transacciones)
+    # Valor inventario
+    val = q("SELECT COALESCE(SUM(p.precio*i.cantidad),0) as v FROM inventario i JOIN productos p ON p.id=i.producto_id")[0]
 
-=== PRODUCTOS CON STOCK BAJO O AGOTADO ===
-{low_txt}
+    # Ventas recientes detalladas (últimas 10)
+    recientes = q("""
+        SELECT v.folio, DATE(v.fecha) as fecha, v.total,
+               v.metodo_pago, COALESCE(c.nombre,'Público General') as cliente
+        FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
+        WHERE v.estado='Completada'
+        ORDER BY v.fecha DESC LIMIT 10
+    """)
 
-=== TOP 8 PRODUCTOS MÁS VENDIDOS ===
+    # Formateo
+    dias_txt  = "\n".join([f"  {r['dia']:12s}: {r['transacciones']} ventas | ${float(r['total']):>10,.2f} | ticket prom ${float(r['ticket_prom']):,.2f}" for r in dias_semana]) or "  Sin datos"
+    diarias_txt = "\n".join([f"  {r['dia']}: {r['n']} ventas / ${float(r['total']):,.2f}" for r in ventas_diarias]) or "  Sin datos"
+    meses_txt = "\n".join([f"  {r['mes']}: {r['n']} ventas / ${float(r['total']):,.2f}" for r in ventas_mes]) or "  Sin datos"
+    top_txt   = "\n".join([f"  {r['emoji']} {r['nombre']}: {r['u']} uds / ${float(r['ing']):,.2f} (en {r['en_ventas']} ventas)" for r in top]) or "  Sin ventas"
+    cat_txt   = "\n".join([f"  {r['emoji']} {r['nombre']}: ${float(r['total']):,.2f} | {r['unidades']} uds | {r['n_prod']} productos" for r in cats]) or "  Sin datos"
+    low_txt   = "\n".join([f"  - {r['nombre']}: {r['cantidad']} uds (mín {r['min_stock']} / máx {r['max_stock']}) — {r['localidad']}" for r in low]) or "  Ninguno"
+    ok_txt    = "\n".join([f"  - {r['nombre']}: {r['cantidad']} uds — {r['localidad']}" for r in inv_ok]) or "  Sin datos"
+    cli_txt   = "\n".join([f"  - {r['nombre']} | {r['compras']} compras | ${float(r['total']):,.2f} | últ: {str(r['ultima_compra'])[:10]}" for r in clientes_top]) or "  Sin datos"
+    rec_txt   = "\n".join([f"  {r['fecha']} {r['folio']}: ${float(r['total']):,.2f} ({r['metodo_pago']}) — {r['cliente']}" for r in recientes]) or "  Sin datos"
+
+    return f"""Hoy es {hoy.strftime('%A %d/%m/%Y')}. Eres un asistente experto en gestión de negocios de venta de uniformes.
+Tienes acceso COMPLETO a la base de datos del negocio. Responde en español, de forma concisa y accionable.
+Cuando te pregunten por días, meses, tendencias o rankings, SIEMPRE usa los datos de las secciones correspondientes.
+
+=== RESUMEN DE VENTAS ===
+  Total histórico : ${float(vt['t']):,.2f} en {vt['n']} transacciones
+  Este mes        : ${float(vm['t']):,.2f} en {vm['n']} transacciones
+  Esta semana     : ${float(vs['t']):,.2f} en {vs['n']} transacciones
+  Hoy             : ${float(vh['t']):,.2f} en {vh['n']} transacciones
+
+=== VENTAS POR DÍA DE LA SEMANA (histórico completo) ===
+{dias_txt}
+
+=== VENTAS DIARIAS (últimos 30 días) ===
+{diarias_txt}
+
+=== VENTAS POR MES (últimos 6 meses) ===
+{meses_txt}
+
+=== ÚLTIMAS 10 VENTAS ===
+{rec_txt}
+
+=== TOP 10 PRODUCTOS MÁS VENDIDOS ===
 {top_txt}
 
 === VENTAS POR CATEGORÍA ===
 {cat_txt}
 
+=== STOCK BAJO O AGOTADO ===
+{low_txt}
+
+=== PRODUCTOS CON BUEN STOCK (top 10) ===
+{ok_txt}
+
 === APARTADOS ===
-  Activos         : {apt['n']} apartados
+  Activos         : {apt['n']} | Total venta: ${float(apt['tv']):,.2f}
   Saldo por cobrar: ${float(apt['s']):,.2f}
   Anticipo captado: ${float(apt['a']):,.2f}
   Vencidos        : {apt_venc['n']}
+  Esta semana     : {apt_sem['n']} apartados / ${float(apt_sem['t']):,.2f}
 
-=== TOP 5 CLIENTES ===
+=== TOP 8 CLIENTES ===
 {cli_txt}
 
 === INVENTARIO ===
-  Valor total     : ${float(val['v']):,.2f}
-  Productos       : {q("SELECT COUNT(*) as n FROM productos")[0]['n']}
-  Clientes        : {q("SELECT COUNT(*) as n FROM clientes")[0]['n']}
+  Valor total del inventario: ${float(val['v']):,.2f}
+  Total productos en catálogo: {q("SELECT COUNT(*) as n FROM productos")[0]['n']}
+  Total clientes registrados : {q("SELECT COUNT(*) as n FROM clientes")[0]['n']}
 """
 
 
