@@ -33,13 +33,26 @@ def _lista(cats):
     """)
 
     st.caption(f"{len(prods)} producto(s)")
+
+    # Agrupar por categoría
+    por_cat = {}
     for p in prods:
-        stock  = int(p['stock'])
-        min_s  = q("SELECT COALESCE(MIN(min_stock),5) as m FROM inventario WHERE producto_id=?", (p['id'],))[0]['m']
-        status = "❌ Sin stock" if stock==0 else ("⚠️ Stock bajo" if stock<=min_s else "✅ Normal")
-        talla_label = TIPO_TALLA_LABELS.get(p['tipo_talla'],'—')
-        with st.expander(f"{p['emoji']} **{p['nombre']}** · ${float(p['precio']):,.2f} · {status} · 📏 {talla_label}"):
-            m1,m2,m3,m4 = st.columns(4)
+        cat_key = f"{p['cat_emoji'] or '📦'} {p['cat_nombre'] or 'Sin categoría'}"
+        if cat_key not in por_cat:
+            por_cat[cat_key] = []
+        por_cat[cat_key].append(p)
+
+    for cat_label, cat_prods in por_cat.items():
+        st.divider()
+        st.markdown(f"#### {cat_label}")
+        st.caption(f"{len(cat_prods)} producto(s) en esta categoría")
+        for p in cat_prods:
+          stock  = int(p['stock'])
+          min_s  = q("SELECT COALESCE(MIN(min_stock),5) as m FROM inventario WHERE producto_id=?", (p['id'],))[0]['m']
+          status = "❌ Sin stock" if stock==0 else ("⚠️ Stock bajo" if stock<=min_s else "✅ Normal")
+          talla_label = TIPO_TALLA_LABELS.get(p['tipo_talla'],'—')
+          with st.expander(f"{p['emoji']} **{p['nombre']}** · ${float(p['precio']):,.2f} · {status} · 📏 {talla_label}"):
+              m1,m2,m3,m4 = st.columns(4)
             m1.metric("Precio", f"${float(p['precio']):,.2f}")
             m2.metric("Stock total", stock)
             m3.metric("Categoría", f"{p['cat_emoji'] or ''} {p['cat_nombre'] or '—'}")
@@ -55,8 +68,8 @@ def _lista(cats):
                         color = "🔴" if ts['cant']==0 else ("🟡" if ts['cant']<=3 else "🟢")
                         cols[i].metric(ts['talla'], f"{color} {ts['cant']}")
 
-            st.divider()
-            _form_editar(p, cats)
+              st.divider()
+              _form_editar(p, cats)
 
 
 def _form_nuevo(cats):

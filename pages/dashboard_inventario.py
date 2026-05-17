@@ -104,14 +104,14 @@ def render():
         # Si no → mostrar total por producto
         if talla_fil or prod_id:
             # Detalle por producto + talla
-            labels = [f"{r['emoji']} {r['nombre']} · {r['talla']}" for r in inv_raw]
+            labels = [f"{r['cat_emoji'] or '📦'} {r['categoria'] or '—'} › {r['emoji']} {r['nombre']} · {r['talla']}" for r in inv_raw]
             values = [r['cantidad'] for r in inv_raw]
             colors = ['#fc8181' if v==0 else ('#f6ad55' if v<=r['min_stock'] else '#68d391')
                       for v,r in zip(values, inv_raw)]
             title  = "Stock por producto / talla"
         else:
             # Agrupado por producto
-            labels = [f"{r['emoji']} {r['nombre']}" for r in prods_agg]
+            labels = [f"{r['cat_emoji'] or '📦'} {r['categoria'] or '—'} › {r['emoji']} {r['nombre']}" for r in prods_agg]
             values = [r['cantidad_total'] for r in prods_agg]
             colors = ['#fc8181' if v==0 else ('#f6ad55' if v<=r['min_stock'] else '#68d391')
                       for v,r in zip(values, prods_agg)]
@@ -174,10 +174,11 @@ def render():
         cols = st.columns(min(len(alertas), 3))
         for i, a in enumerate(alertas):
             with cols[i % 3]:
+                cat_tag = f"{a['cat_emoji'] or ''} {a['categoria'] or 'Sin cat.'}"
                 if a['cantidad'] == 0:
-                    st.error(f"**{a['emoji']} {a['nombre']}**  \nTalla {a['talla']} · Sin stock", icon="❌")
+                    st.error(f"**{a['emoji']} {a['nombre']}**  \n{cat_tag} · Talla {a['talla']} · Sin stock", icon="❌")
                 else:
-                    st.warning(f"**{a['emoji']} {a['nombre']}**  \nTalla {a['talla']} · {a['cantidad']} uds (mín {a['min_stock']})", icon="⚠️")
+                    st.warning(f"**{a['emoji']} {a['nombre']}**  \n{cat_tag} · Talla {a['talla']} · {a['cantidad']} uds (mín {a['min_stock']})", icon="⚠️")
 
     # ── Tallas (solo si no hay filtro de talla específica) ────────────────────
     if not talla_fil:
@@ -211,6 +212,7 @@ def render():
 
     df = pd.DataFrame([{
         'Producto':    f"{r['emoji']} {r['nombre']}",
+        '🗂️ Categoría': f"{r['cat_emoji'] or ''} {r['categoria'] or '—'}",
         'Categoría':   r['categoria'] or '—',
         'Talla':       r['talla'],
         'Localidad':   r['localidad'],
