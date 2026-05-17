@@ -1,118 +1,134 @@
 import streamlit as st
-import pandas as pd
 from database import q, run
 
-EMOJIS = ["📦","💻","🖱️","⌨️","🎧","🖥️","👕","👖","🧥","🍎","💧","☕","🍿","💡","🪑","🔧","📏","📱","🎮","🏠","⚽","📚","🌿","💊","🧴"]
+EMOJIS = ["👔","👕","👖","🧥","🩱","🩲","🩳","🦺","👞","👟","🧢","🪢","🎒","📦","🔧","🌿","💊","⭐"]
 
 def render():
-    st.markdown('<p class="sp-title">🏷️ <span class="sp-accent">Productos</span></p>', unsafe_allow_html=True)
-    st.markdown('<p class="sp-subtitle">Catálogo de productos</p>', unsafe_allow_html=True)
+    st.header("👔 Productos")
 
-    tab_list, tab_new = st.tabs(["📋 Listado", "➕ Nuevo Producto"])
+    tab_lista, tab_nuevo = st.tabs(["📋 Lista de Productos", "➕ Nuevo Producto"])
 
-    with tab_list:
-        sf1, sf2 = st.columns([3, 1])
-        search = sf1.text_input("🔍 Buscar producto", placeholder="Nombre...", label_visibility="collapsed")
-        cats = q("SELECT * FROM categorias ORDER BY nombre")
-        cat_opts = {"Todas": None} | {f"{c['emoji']} {c['nombre']}": c['id'] for c in cats}
-        cat_sel = sf2.selectbox("Categoría", list(cat_opts.keys()), label_visibility="collapsed")
-        cat_id = cat_opts[cat_sel]
+    cats = q("SELECT * FROM categorias ORDER BY nombre")
 
-        prods = q("""
-            SELECT p.*, c.nombre as cat_nombre, c.emoji as cat_emoji,
-                   COALESCE((SELECT SUM(cantidad) FROM inventario WHERE producto_id=p.id),0) as stock
-            FROM productos p LEFT JOIN categorias c ON c.id=p.categoria_id
-            WHERE (%s) AND (%s)
-            ORDER BY p.nombre
-        """ % (
-            f"LOWER(p.nombre) LIKE '%{search.lower()}%'" if search else "1=1",
-            f"p.categoria_id={cat_id}" if cat_id else "1=1"
-        ))
+    with tab_nuevo:
+        _form_nuevo(cats)
 
-        if not prods:
-            st.info("No hay productos")
-        else:
-            for p in prods:
-                stock = p['stock']
-                status = "❌ Sin Stock" if stock == 0 else ("⚠️ Stock Bajo" if stock <= 5 else "✅ Normal")
-                with st.expander(f"{p['emoji']} **{p['nombre']}** · ${p['precio']:,.2f} · {status}"):
-                    ec1, ec2, ec3 = st.columns(3)
-                    ec1.markdown(f"**Categoría:** {p['cat_emoji']} {p['cat_nombre']}")
-                    ec2.markdown(f"**Precio:** ${p['precio']:,.2f}")
-                    ec3.markdown(f"**Stock Total:** {stock}")
-
-                    st.markdown("---")
-                    _edit_form(p, cats)
-
-    with tab_new:
-        _new_form(cats)
+    with tab_lista:
+        _lista(cats)
 
 
-def _new_form(cats):
-    st.markdown("#### ➕ Agregar Nuevo Producto")
-    with st.form("new_product"):
+def _lista(cats):
+    # Filtros
+    fc1, fc2 = st.columns([3,1])
+    buscar   = fc1.text_input("🔍 Buscar", placeholder="Nombre del producto...", label_visibility="collapsed")
+    cat_opts = {"Todas":None} | {f"{c['emoji']} {c['nombre']}": c['id'] for c in cats}
+    cat_sel  = fc2.selectbox("Categoría", list(cat_opts.keys()), label_visibility="collapsed")
+    cat_id   = cat_opts[cat_sel]
+
+    filtro_n = f"AND LOWER(p.nombre) LIKE '%{buscar.lower()}%'" if buscar else ""
+    filtro_c = f"AND p.categoria_id={cat_id}" if cat_id else ""
+
+    prods = q(f"""
+        SELECT p.*, c.nombre as cat_nombre, c.emoji as cat_emoji,
+               COALESCE((SELECT SUM(cantidad) FROM inventario WHERE producto_id=p.id),0) as stock
+        FROM productos p LEFT JOIN categorias c ON c.id=p.categoria_id
+        WHERE 1=1 {filtro_n} {filtro_c} ORDER BY p.nombre
+    """)
+
+    st.caption(f"{len(prods)} producto(s) encontrado(s)")
+
+    if not prods:
+        st.info("No hay productos con los filtros seleccionados.")
+        return
+
+    for p in prods:
+        stock  = int(p['stock'])
+        status = "❌ Sin stock" if stock==0 else ("⚠️ Stock bajo" if stock<=p['min_stock'] else "✅ Normal")
+        with st.expander(f"{p['emoji']} **{p['nombre']}** · ${float(p['precio']):,.2f} · {status} ({stock} uds)"):
+            info1, info2, info3 = st.columns(3)
+            info1.metric("Precio",       f"${float(p['precio']):,.2f}")
+            info2.metric("Stock actual", stock)
+            info3.metric("Categoría",    f"{p['cat_emoji']} {p['cat_nombre']}" if p['cat_nombre'] else "—")
+            if p['descripcion']:
+                st.caption(p['descripcion'])
+            st.divider()
+            _form_editar(p, cats)
+
+
+def _form_nuevo(cats):
+    st.subheader("Agregar nuevo producto")
+    with st.form("form_nuevo_prod", clear_on_submit=True):
         c1, c2 = st.columns(2)
-        nombre = c1.text_input("Nombre *")
-        precio = c2.number_input("Precio *", min_value=0.0, step=0.5, format="%.2f")
+        nombre = c1.text_input("Nombre del producto *")
+        precio = c2.number_input("Precio de venta *", min_value=0.01, step=1.0, format="%.2f")
 
         c3, c4 = st.columns(2)
         cat_opts = {f"{c['emoji']} {c['nombre']}": c['id'] for c in cats}
-        cat_sel = c3.selectbox("Categoría", list(cat_opts.keys()))
-        emoji = c4.selectbox("Emoji", EMOJIS)
+        cat_sel  = c3.selectbox("Categoría *", list(cat_opts.keys()))
+        emoji    = c4.selectbox("Ícono", EMOJIS)
 
-        descripcion = st.text_area("Descripción", height=80)
-        codigo = st.text_input("Código de Barras")
+        descripcion = st.text_area("Descripción", height=80, placeholder="Descripción opcional...")
+        codigo      = st.text_input("Código de barras", placeholder="Opcional")
 
-        st.markdown("**Stock Inicial**")
-        sc1, sc2, sc3, sc4 = st.columns(4)
-        localidad = sc1.text_input("Localidad", value="Almacén Central")
-        cant_ini = sc2.number_input("Cantidad", min_value=0, value=0)
-        min_s = sc3.number_input("Mín. Stock", min_value=0, value=5)
-        max_s = sc4.number_input("Máx. Stock", min_value=1, value=50)
+        st.markdown("**Stock inicial**")
+        s1, s2, s3, s4 = st.columns(4)
+        localidad  = s1.text_input("Localidad",    value="Tienda Principal")
+        cant_ini   = s2.number_input("Cantidad",   min_value=0, value=0)
+        min_stock  = s3.number_input("Mínimo",     min_value=0, value=5)
+        max_stock  = s4.number_input("Máximo",     min_value=1, value=100)
 
-        submitted = st.form_submit_button("💾 Guardar Producto", type="primary", use_container_width=True)
-        if submitted:
-            if not nombre or not precio:
-                st.error("Nombre y precio son requeridos")
+        if st.form_submit_button("💾 Guardar producto", type="primary", use_container_width=True):
+            if not nombre.strip():
+                st.error("El nombre es requerido")
+            elif precio <= 0:
+                st.error("El precio debe ser mayor a 0")
             else:
-                pid = run(
-                    "INSERT INTO productos (nombre, precio, categoria_id, emoji, descripcion, codigo_barras) VALUES (?,?,?,?,?,?)",
-                    (nombre, precio, cat_opts[cat_sel], emoji, descripcion, codigo)
-                )
-                run(
-                    "INSERT INTO inventario (producto_id, localidad, cantidad, min_stock, max_stock) VALUES (?,?,?,?,?)",
-                    (pid, localidad, cant_ini, min_s, max_s)
-                )
+                pid = run("INSERT INTO productos(nombre,precio,categoria_id,emoji,descripcion,codigo_barras)"
+                          " VALUES(?,?,?,?,?,?)",
+                          (nombre.strip(), precio, cat_opts[cat_sel], emoji, descripcion, codigo))
+                run("INSERT INTO inventario(producto_id,localidad,cantidad,min_stock,max_stock)"
+                    " VALUES(?,?,?,?,?)", (pid, localidad, cant_ini, min_stock, max_stock))
                 st.success(f"✅ Producto **{nombre}** creado correctamente")
                 st.rerun()
 
 
-def _edit_form(p, cats):
-    with st.form(f"edit_{p['id']}"):
+def _form_editar(p, cats):
+    cat_opts = {f"{c['emoji']} {c['nombre']}": c['id'] for c in cats}
+    cat_default = next((k for k,v in cat_opts.items() if v==p['categoria_id']), list(cat_opts.keys())[0])
+
+    with st.form(f"form_edit_{p['id']}"):
+        st.markdown("**Editar datos del producto**")
         c1, c2 = st.columns(2)
-        nombre = c1.text_input("Nombre", value=p['nombre'])
-        precio = c2.number_input("Precio", value=float(p['precio']), min_value=0.0, step=0.5, format="%.2f")
+        nombre = c1.text_input("Nombre",  value=p['nombre'])
+        precio = c2.number_input("Precio", value=float(p['precio']), min_value=0.01, step=1.0, format="%.2f")
 
         c3, c4 = st.columns(2)
-        cat_opts = {f"{c['emoji']} {c['nombre']}": c['id'] for c in cats}
-        cat_default = next((k for k, v in cat_opts.items() if v == p['categoria_id']), list(cat_opts.keys())[0])
-        cat_sel = c3.selectbox("Categoría", list(cat_opts.keys()), index=list(cat_opts.keys()).index(cat_default))
-        emoji = c4.selectbox("Emoji", EMOJIS, index=EMOJIS.index(p['emoji']) if p['emoji'] in EMOJIS else 0)
+        cat_sel = c3.selectbox("Categoría", list(cat_opts.keys()),
+                               index=list(cat_opts.keys()).index(cat_default))
+        emoji   = c4.selectbox("Ícono", EMOJIS,
+                               index=EMOJIS.index(p['emoji']) if p['emoji'] in EMOJIS else 0)
 
-        descripcion = st.text_area("Descripción", value=p['descripcion'] or "", height=60)
+        descripcion = st.text_area("Descripción", value=p['descripcion'] or "", height=70)
+        codigo      = st.text_input("Código de barras", value=p['codigo_barras'] or "")
 
-        sb1, sb2, sb3 = st.columns(3)
-        save = sb1.form_submit_button("💾 Guardar", type="primary", use_container_width=True)
-        delete = sb3.form_submit_button("🗑️ Eliminar", use_container_width=True)
+        col_g, col_e = st.columns([1,1])
+        guardar  = col_g.form_submit_button("💾 Guardar cambios", type="primary", use_container_width=True)
+        eliminar = col_e.form_submit_button("🗑️ Eliminar producto", use_container_width=True)
 
-        if save:
-            run("UPDATE productos SET nombre=?, precio=?, categoria_id=?, emoji=?, descripcion=? WHERE id=?",
-                (nombre, precio, cat_opts[cat_sel], emoji, descripcion, p['id']))
-            st.success("Producto actualizado")
+        if guardar:
+            run("UPDATE productos SET nombre=?,precio=?,categoria_id=?,emoji=?,descripcion=?,codigo_barras=? WHERE id=?",
+                (nombre, precio, cat_opts[cat_sel], emoji, descripcion, codigo, p['id']))
+            st.success("✅ Producto actualizado")
             st.rerun()
 
-        if delete:
+        if eliminar:
+            n_items = q("SELECT COUNT(*) as n FROM venta_items WHERE producto_id=?", (p['id'],))[0]['n']
+            # Borrar en cascada
+            run("DELETE FROM venta_items WHERE producto_id=?", (p['id'],))
             run("DELETE FROM inventario WHERE producto_id=?", (p['id'],))
             run("DELETE FROM productos WHERE id=?", (p['id'],))
-            st.warning("Producto eliminado")
+            if n_items:
+                st.warning(f"Producto eliminado (estaba en {n_items} línea(s) de venta; el historial se limpió también)")
+            else:
+                st.success("Producto eliminado correctamente")
             st.rerun()

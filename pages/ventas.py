@@ -3,85 +3,84 @@ import pandas as pd
 from database import q, run
 
 def render():
-    st.markdown('<p class="sp-title">💳 <span class="sp-accent">Ventas</span></p>', unsafe_allow_html=True)
-    st.markdown('<p class="sp-subtitle">Historial completo de transacciones</p>', unsafe_allow_html=True)
+    st.header("🧾 Ventas")
 
-    # Filters
-    fc1, fc2, fc3, fc4 = st.columns(4)
-    search = fc1.text_input("🔍 Buscar folio/cliente", label_visibility="collapsed", placeholder="Folio o cliente...")
-    estado_f = fc2.selectbox("Estado", ["Todos", "Completada", "Cancelada"], label_visibility="collapsed")
-    metodo_f = fc3.selectbox("Método pago", ["Todos", "Efectivo", "Tarjeta", "Transferencia"], label_visibility="collapsed")
-    orden_f = fc4.selectbox("Ordenar", ["Más reciente", "Más antigua", "Mayor monto", "Menor monto"], label_visibility="collapsed")
+    tab_hist, tab_detalle = st.tabs(["📋 Historial", "🔍 Buscar / Filtrar"])
 
     ventas = q("""
-        SELECT v.*, c.nombre as cliente_nombre
+        SELECT v.*, COALESCE(c.nombre,'Público General') as cliente_nombre
         FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
         ORDER BY v.fecha DESC
     """)
 
-    # Apply filters
-    if search:
-        s = search.lower()
-        ventas = [v for v in ventas if s in v['folio'].lower() or (v['cliente_nombre'] and s in v['cliente_nombre'].lower())]
-    if estado_f != "Todos":
-        ventas = [v for v in ventas if v['estado'] == estado_f]
-    if metodo_f != "Todos":
-        ventas = [v for v in ventas if v['metodo_pago'] == metodo_f]
-    if orden_f == "Más antigua":
-        ventas = sorted(ventas, key=lambda x: x['fecha'])
-    elif orden_f == "Mayor monto":
-        ventas = sorted(ventas, key=lambda x: x['total'], reverse=True)
-    elif orden_f == "Menor monto":
-        ventas = sorted(ventas, key=lambda x: x['total'])
+    with tab_hist:
+        # Resumen rápido
+        total_sum = sum(float(v['total']) for v in ventas if v['estado']=='Completada')
+        m1,m2,m3 = st.columns(3)
+        m1.metric("Total en historial", f"${total_sum:,.2f}")
+        m2.metric("Transacciones",      len(ventas))
+        m3.metric("Promedio",           f"${total_sum/len(ventas):,.2f}" if ventas else "$0")
+        st.divider()
 
-    # Summary
-    total_sum = sum(v['total'] for v in ventas if v['estado'] == 'Completada')
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total mostrado", f"${total_sum:,.2f}")
-    m2.metric("Transacciones", len(ventas))
-    m3.metric("Ticket promedio", f"${total_sum/len(ventas):,.2f}" if ventas else "$0")
+        for v in ventas[:50]:  # mostramos máx 50
+            ico  = "✅" if v['estado']=='Completada' else "❌"
+            with st.expander(f"{ico} **{v['folio']}** · {v['cliente_nombre']} · **${float(v['total']):,.2f}** · {str(v['fecha'])[:16]}"):
+                vc1,vc2,vc3,vc4 = st.columns(4)
+                vc1.markdown(f"**Cliente:** {v['cliente_nombre']}")
+                vc2.markdown(f"**Pago:** {v['metodo_pago']}")
+                vc3.markdown(f"**Estado:** {v['estado']}")
+                vc4.markdown(f"**Fecha:** {str(v['fecha'])[:16]}")
 
-    st.markdown("---")
+                items = q("""
+                    SELECT vi.cantidad, vi.precio_unitario, vi.subtotal, p.nombre, p.emoji
+                    FROM venta_items vi JOIN productos p ON p.id=vi.producto_id WHERE vi.venta_id=?
+                """, (v['id'],))
+                if items:
+                    df = pd.DataFrame([{
+                        'Producto': f"{i['emoji']} {i['nombre']}",
+                        'Cant.': i['cantidad'],
+                        'Precio': f"${float(i['precio_unitario']):,.2f}",
+                        'Subtotal': f"${float(i['subtotal']):,.2f}",
+                    } for i in items])
+                    st.dataframe(df, use_container_width=True, hide_index=True)
 
-    if not ventas:
-        st.info("No hay ventas con los filtros aplicados")
-        return
+                st.markdown(f"**Subtotal:** ${float(v['subtotal']):,.2f} · "
+                            f"**IVA:** ${float(v['impuesto']):,.2f} · "
+                            f"**Total: ${float(v['total']):,.2f}**")
+                if v['notas']:
+                    st.caption(f"📝 {v['notas']}")
 
-    for v in ventas:
-        cliente = v['cliente_nombre'] or 'Público General'
-        estado_icon = "✅" if v['estado'] == 'Completada' else "❌"
-        with st.expander(f"{estado_icon} **{v['folio']}** · {cliente} · **${v['total']:,.2f}** · {v['fecha'][:16]}"):
-            vc1, vc2, vc3, vc4 = st.columns(4)
-            vc1.markdown(f"**Cliente:** {cliente}")
-            vc2.markdown(f"**Método:** {v['metodo_pago']}")
-            vc3.markdown(f"**Estado:** {v['estado']}")
-            vc4.markdown(f"**Fecha:** {v['fecha'][:16]}")
+                if v['estado'] == 'Completada':
+                    if st.button("❌ Cancelar venta", key=f"cancel_{v['id']}"):
+                        run("UPDATE ventas SET estado='Cancelada' WHERE id=?", (v['id'],))
+                        st.warning("Venta cancelada")
+                        st.rerun()
 
-            # Items
-            items = q("""
-                SELECT vi.*, p.nombre, p.emoji FROM venta_items vi
-                JOIN productos p ON p.id=vi.producto_id WHERE vi.venta_id=?
-            """, (v['id'],))
+    with tab_detalle:
+        st.subheader("Filtros avanzados")
+        fc1,fc2,fc3 = st.columns(3)
+        buscar  = fc1.text_input("Folio o cliente", placeholder="Buscar...")
+        estado_f= fc2.selectbox("Estado",    ["Todos","Completada","Cancelada"])
+        metodo_f= fc3.selectbox("Método",    ["Todos","Efectivo","Tarjeta de Débito","Tarjeta de Crédito","Transferencia"])
 
-            if items:
-                st.markdown("**Productos:**")
-                df_items = pd.DataFrame([{
-                    'Producto': f"{i['emoji']} {i['nombre']}",
-                    'Cantidad': i['cantidad'],
-                    'Precio Unit.': f"${i['precio_unitario']:,.2f}",
-                    'Subtotal': f"${i['subtotal']:,.2f}"
-                } for i in items])
-                st.dataframe(df_items, use_container_width=True, hide_index=True)
+        fil = ventas
+        if buscar:
+            s = buscar.lower()
+            fil = [v for v in fil if s in v['folio'].lower() or s in v['cliente_nombre'].lower()]
+        if estado_f != "Todos":  fil = [v for v in fil if v['estado']==estado_f]
+        if metodo_f != "Todos":  fil = [v for v in fil if v['metodo_pago']==metodo_f]
 
-            st.markdown(f"""
-            <div style="text-align:right;background:#1a2744;border-radius:8px;padding:10px;margin-top:8px">
-                <span style="color:#8892a4;margin-right:20px">Subtotal: ${v['subtotal']:,.2f}</span>
-                <span style="color:#8892a4;margin-right:20px">IVA: ${v['impuesto']:,.2f}</span>
-                <span style="color:#f5a623;font-weight:700;font-size:18px">Total: ${v['total']:,.2f}</span>
-            </div>""", unsafe_allow_html=True)
-
-            if v['estado'] == 'Completada':
-                if st.button(f"❌ Cancelar Venta", key=f"cancel_{v['id']}"):
-                    run("UPDATE ventas SET estado='Cancelada' WHERE id=?", (v['id'],))
-                    st.warning("Venta cancelada")
-                    st.rerun()
+        if fil:
+            df_fil = pd.DataFrame([{
+                'Folio': v['folio'],
+                'Fecha': str(v['fecha'])[:16],
+                'Cliente': v['cliente_nombre'],
+                'Total': f"${float(v['total']):,.2f}",
+                'Pago': v['metodo_pago'],
+                'Estado': v['estado'],
+            } for v in fil])
+            st.dataframe(df_fil, use_container_width=True, hide_index=True)
+            total_f = sum(float(v['total']) for v in fil if v['estado']=='Completada')
+            st.caption(f"Total filtrado: **${total_f:,.2f}** en {len(fil)} transacción(es)")
+        else:
+            st.info("Sin resultados")

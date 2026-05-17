@@ -1,21 +1,5 @@
-# ── StockPOS - requirements.txt ──────────────────────────────────────────────
-# Instalar con:  pip install -r requirements.txt
-
-# Core Streamlit
 streamlit>=1.35.0
-
-# Visualizaciones
 plotly>=5.20.0
 pandas>=2.2.0
-
-# PostgreSQL (solo producción)
-# Se instala igual en dev para que el import no falle si alguien
-# define DATABASE_URL en su máquina local.
 psycopg2-binary>=2.9.9
-
-# Variables de entorno desde .env (opcional pero recomendado)
 python-dotenv>=1.0.0
-
-# HTTP para llamadas a GROQ (ya viene en stdlib con urllib, pero
-# si prefieres requests para el agente IA descomenta la siguiente línea)
-# requests>=2.31.0
