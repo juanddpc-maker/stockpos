@@ -1,5 +1,5 @@
 """
-database.py — UniControl
+database.py — Sistema de Uniformes
 SQLite (local/dev) ↔ PostgreSQL (producción)
 Detección automática por variable DATABASE_URL
 """
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS productos(
   FOREIGN KEY(categoria_id) REFERENCES categorias(id));
 CREATE TABLE IF NOT EXISTS inventario(
   id INTEGER PRIMARY KEY AUTOINCREMENT, producto_id INTEGER NOT NULL,
-  localidad TEXT NOT NULL DEFAULT 'Almacén Central', cantidad INTEGER NOT NULL DEFAULT 0,
+  localidad TEXT NOT NULL DEFAULT 'Tienda Principal', cantidad INTEGER NOT NULL DEFAULT 0,
   min_stock INTEGER DEFAULT 5, max_stock INTEGER DEFAULT 100,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(producto_id) REFERENCES productos(id));
@@ -85,6 +85,37 @@ CREATE TABLE IF NOT EXISTS venta_items(
   precio_unitario REAL NOT NULL, subtotal REAL NOT NULL,
   FOREIGN KEY(venta_id) REFERENCES ventas(id),
   FOREIGN KEY(producto_id) REFERENCES productos(id));
+CREATE TABLE IF NOT EXISTS apartados(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  folio TEXT NOT NULL UNIQUE,
+  fecha_apartado TEXT NOT NULL,
+  fecha_limite TEXT,
+  cliente_id INTEGER,
+  total_venta REAL NOT NULL DEFAULT 0,
+  anticipo REAL NOT NULL DEFAULT 0,
+  abonado REAL NOT NULL DEFAULT 0,
+  saldo REAL NOT NULL DEFAULT 0,
+  estado TEXT DEFAULT 'Apartado',
+  notas TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(cliente_id) REFERENCES clientes(id));
+CREATE TABLE IF NOT EXISTS apartado_items(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  apartado_id INTEGER NOT NULL,
+  producto_id INTEGER NOT NULL,
+  cantidad INTEGER NOT NULL,
+  precio_unitario REAL NOT NULL,
+  subtotal REAL NOT NULL,
+  FOREIGN KEY(apartado_id) REFERENCES apartados(id),
+  FOREIGN KEY(producto_id) REFERENCES productos(id));
+CREATE TABLE IF NOT EXISTS apartado_abonos(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  apartado_id INTEGER NOT NULL,
+  fecha TEXT NOT NULL,
+  monto REAL NOT NULL,
+  metodo_pago TEXT DEFAULT 'Efectivo',
+  notas TEXT,
+  FOREIGN KEY(apartado_id) REFERENCES apartados(id));
 CREATE TABLE IF NOT EXISTS config(clave TEXT PRIMARY KEY, valor TEXT);
 """
 
@@ -98,7 +129,7 @@ CREATE TABLE IF NOT EXISTS productos(
   codigo_barras TEXT, descripcion TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS inventario(
   id SERIAL PRIMARY KEY, producto_id INTEGER NOT NULL REFERENCES productos(id),
-  localidad TEXT NOT NULL DEFAULT 'Almacén Central', cantidad INTEGER NOT NULL DEFAULT 0,
+  localidad TEXT NOT NULL DEFAULT 'Tienda Principal', cantidad INTEGER NOT NULL DEFAULT 0,
   min_stock INTEGER DEFAULT 5, max_stock INTEGER DEFAULT 100, updated_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS clientes(
   id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, telefono TEXT, email TEXT,
@@ -113,6 +144,23 @@ CREATE TABLE IF NOT EXISTS venta_items(
   id SERIAL PRIMARY KEY, venta_id INTEGER NOT NULL REFERENCES ventas(id),
   producto_id INTEGER NOT NULL REFERENCES productos(id), cantidad INTEGER NOT NULL,
   precio_unitario NUMERIC(12,2) NOT NULL, subtotal NUMERIC(12,2) NOT NULL);
+CREATE TABLE IF NOT EXISTS apartados(
+  id SERIAL PRIMARY KEY, folio TEXT NOT NULL UNIQUE,
+  fecha_apartado TIMESTAMPTZ NOT NULL, fecha_limite TIMESTAMPTZ,
+  cliente_id INTEGER REFERENCES clientes(id),
+  total_venta NUMERIC(12,2) NOT NULL DEFAULT 0,
+  anticipo NUMERIC(12,2) NOT NULL DEFAULT 0,
+  abonado NUMERIC(12,2) NOT NULL DEFAULT 0,
+  saldo NUMERIC(12,2) NOT NULL DEFAULT 0,
+  estado TEXT DEFAULT 'Apartado', notas TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS apartado_items(
+  id SERIAL PRIMARY KEY, apartado_id INTEGER NOT NULL REFERENCES apartados(id),
+  producto_id INTEGER NOT NULL REFERENCES productos(id),
+  cantidad INTEGER NOT NULL, precio_unitario NUMERIC(12,2) NOT NULL, subtotal NUMERIC(12,2) NOT NULL);
+CREATE TABLE IF NOT EXISTS apartado_abonos(
+  id SERIAL PRIMARY KEY, apartado_id INTEGER NOT NULL REFERENCES apartados(id),
+  fecha TIMESTAMPTZ NOT NULL, monto NUMERIC(12,2) NOT NULL,
+  metodo_pago TEXT DEFAULT 'Efectivo', notas TEXT);
 CREATE TABLE IF NOT EXISTS config(clave TEXT PRIMARY KEY, valor TEXT);
 """
 
@@ -142,38 +190,41 @@ def _seed(conn, cur):
         cur.executemany(sql.replace("?", ph), rows)
 
     ins("INSERT INTO categorias(nombre,emoji,descripcion) VALUES(?,?,?)", [
-        ('Uniformes Escolares','🎒','Uniformes para nivel básico y medio'),
-        ('Uniformes Deportivos','⚽','Pants, shorts y playeras deportivas'),
-        ('Uniformes Empresariales','👔','Camisas, chalecos y pantalones de trabajo'),
-        ('Calzado','👟','Zapatos y tenis escolares/deportivos'),
-        ('Accesorios','🧢','Corbatas, cinturones, gorras y más'),
+        ('Uniformes Escolares',    '🎒', 'Uniformes para nivel básico y medio'),
+        ('Uniformes Deportivos',   '🎽', 'Pants, shorts y playeras deportivas'),
+        ('Uniformes Empresariales','👔', 'Camisas, chalecos y pantalones de trabajo'),
+        ('Calzado',                '👟', 'Zapatos y tenis escolares/deportivos'),
+        ('Accesorios',             '🧢', 'Corbatas, cinturones, gorras y más'),
     ])
     ins("INSERT INTO productos(nombre,precio,categoria_id,emoji) VALUES(?,?,?,?)", [
-        ('Camisa Escolar Blanca',   185, 1, '👕'),
-        ('Pantalón Escolar Azul',   220, 1, '👖'),
-        ('Falda Escolar Cuadros',   195, 1, '🩱'),
-        ('Sudadera Escolar',        280, 1, '🧥'),
-        ('Pants Deportivo Completo',350, 2, '🩳'),
-        ('Playera Deportiva',       150, 2, '👕'),
-        ('Short Deportivo',         120, 2, '🩲'),
-        ('Camisa Empresarial',      320, 3, '👔'),
-        ('Chaleco Empresarial',     280, 3, '🦺'),
-        ('Pantalón de Trabajo',     350, 3, '👖'),
-        ('Zapato Escolar Negro',    480, 4, '👞'),
-        ('Tenis Deportivo Blanco',  520, 4, '👟'),
-        ('Corbata Escolar',          85, 5, '👔'),
-        ('Cinturón Negro',          110, 5, '🪢'),
-        ('Gorra con Logo',          145, 5, '🧢'),
+        ('Camisa Escolar Blanca',    185, 1, '👕'),
+        ('Pantalón Escolar Azul',    220, 1, '👖'),
+        ('Falda Escolar Cuadros',    195, 1, '👗'),
+        ('Sudadera Escolar',         280, 1, '🧥'),
+        ('Playera Polo Escolar',     165, 1, '👚'),
+        ('Pants Deportivo Completo', 350, 2, '🩱'),
+        ('Playera Deportiva',        150, 2, '🎽'),
+        ('Short Deportivo',          120, 2, '🩲'),
+        ('Camisa Empresarial',       320, 3, '👔'),
+        ('Chaleco Empresarial',      280, 3, '🦺'),
+        ('Pantalón de Trabajo',      350, 3, '👖'),
+        ('Zapato Escolar Negro',     480, 4, '👞'),
+        ('Tenis Deportivo Blanco',   520, 4, '👟'),
+        ('Corbata Escolar',           85, 5, '👔'),
+        ('Cinturón Negro',           110, 5, '🪢'),
+        ('Gorra con Logo',           145, 5, '🧢'),
+        ('Calcetines Escolares',      45, 5, '🧦'),
     ])
     ins("INSERT INTO inventario(producto_id,localidad,cantidad,min_stock,max_stock) VALUES(?,?,?,?,?)", [
         (1,'Tienda Principal',45,10,100),(2,'Tienda Principal',38,10,80),
         (3,'Tienda Principal',22,8,60),(4,'Almacén',30,10,80),
-        (5,'Almacén',15,5,50),(6,'Tienda Principal',60,15,120),
-        (7,'Tienda Principal',55,15,100),(8,'Almacén',20,8,60),
-        (9,'Almacén',12,5,40),(10,'Almacén',18,5,50),
-        (11,'Tienda Principal',4,10,60),(12,'Tienda Principal',8,10,60),
-        (13,'Tienda Principal',35,10,80),(14,'Almacén',25,10,60),
-        (15,'Almacén',3,5,40),
+        (5,'Tienda Principal',18,8,60),(6,'Almacén',15,5,50),
+        (7,'Tienda Principal',60,15,120),(8,'Tienda Principal',55,15,100),
+        (9,'Almacén',20,8,60),(10,'Almacén',12,5,40),
+        (11,'Almacén',18,5,50),(12,'Tienda Principal',4,10,60),
+        (13,'Tienda Principal',8,10,60),(14,'Tienda Principal',35,10,80),
+        (15,'Almacén',25,10,60),(16,'Almacén',3,5,40),
+        (17,'Tienda Principal',50,20,100),
     ])
     ins("INSERT INTO clientes(nombre,telefono,email,rfc,direccion,notas) VALUES(?,?,?,?,?,?)", [
         ('Escuela Primaria Benito Juárez','664-100-0001','compras@juarez.edu.mx','ESB900101AA1','Av. Principal 100, TJ','Pedido anual en agosto'),
@@ -185,7 +236,8 @@ def _seed(conn, cur):
     cfg = [('app_nombre','UniControl'),('app_subtitulo','Sistema de Uniformes'),
            ('empresa_nombre','Mi Empresa de Uniformes'),('empresa_rfc',''),
            ('empresa_direccion',''),('empresa_telefono',''),('empresa_email',''),
-           ('iva_pct','16'),('moneda','MXN'),('groq_api_key','')]
+           ('iva_pct','16'),('moneda','MXN'),('groq_api_key',''),
+           ('apartado_dias_alerta','7')]
     if USE_PG:
         for k,v in cfg:
             cur.execute("INSERT INTO config VALUES(%s,%s) ON CONFLICT DO NOTHING",(k,v))
@@ -193,8 +245,7 @@ def _seed(conn, cur):
         for k,v in cfg:
             cur.execute("INSERT OR IGNORE INTO config VALUES(?,?)",(k,v))
 
-    # Ventas de muestra
-    precios = [185,220,195,280,350,150,120,320,280,350,480,520,85,110,145]
+    precios = [185,220,195,280,165,350,150,120,320,280,350,480,520,85,110,145,45]
     now = datetime.now()
     for i in range(15):
         fecha  = now - timedelta(days=random.randint(0,13), hours=random.randint(0,8))
@@ -212,7 +263,7 @@ def _seed(conn, cur):
             vid = cur.lastrowid
         sub = 0
         for _ in range(random.randint(1,4)):
-            pid=random.randint(1,15); qty=random.randint(1,6)
+            pid=random.randint(1,17); qty=random.randint(1,6)
             p=precios[pid-1]; line=p*qty; sub+=line
             cur.execute(("INSERT INTO venta_items(venta_id,producto_id,cantidad,precio_unitario,subtotal)"
                          " VALUES(%s,%s,%s,%s,%s)" if USE_PG else
@@ -244,13 +295,7 @@ def run(sql, params=()):
         return getattr(cur, 'lastrowid', None)
 
 
-def run_many(sql, rows):
-    with _ctx() as conn:
-        conn.cursor().executemany(_adapt(sql), rows)
-
-
 def raw_query(sql):
-    """Returns (columns, rows, error)"""
     try:
         with _ctx() as conn:
             cur = conn.cursor()
@@ -259,15 +304,12 @@ def raw_query(sql):
                 cols = [d[0] for d in cur.description]
                 rows = [list(r.values()) if isinstance(r,dict) else list(r) for r in cur.fetchall()]
                 return cols, rows, None
-            # DML affected rows
-            affected = getattr(cur, 'rowcount', 0)
-            return [], [], None  # success, no rows
+            return [], [], None
     except Exception as e:
         return [], [], str(e)
 
 
 def raw_exec(sql):
-    """Execute DML (INSERT/UPDATE/DELETE) — returns (affected, error)"""
     try:
         with _ctx() as conn:
             cur = conn.cursor()
@@ -292,11 +334,18 @@ def set_config(k, v):
         run("INSERT OR REPLACE INTO config(clave,valor) VALUES(?,?)",(k,v))
 
 
-def next_folio():
-    r = q("SELECT folio FROM ventas ORDER BY id DESC LIMIT 1")
-    if not r: return "V-1001"
-    try: return f"V-{int(r[0]['folio'].split('-')[1])+1}"
-    except: return "V-1001"
+def next_folio(prefix="V"):
+    r = q(f"SELECT folio FROM ventas WHERE folio LIKE '{prefix}-%' ORDER BY id DESC LIMIT 1")
+    if not r: return f"{prefix}-1001"
+    try: return f"{prefix}-{int(r[0]['folio'].split('-')[1])+1}"
+    except: return f"{prefix}-1001"
+
+
+def next_apartado_folio():
+    r = q("SELECT folio FROM apartados ORDER BY id DESC LIMIT 1")
+    if not r: return "A-1001"
+    try: return f"A-{int(r[0]['folio'].split('-')[1])+1}"
+    except: return "A-1001"
 
 
 def engine_info():
