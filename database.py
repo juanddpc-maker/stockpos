@@ -193,8 +193,8 @@ def init_db():
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM categorias")
             n = cur.fetchone()[0]
-        if n == 0:
-            _seed(conn, cur)
+        # Seed missing tables individually (tolerant to partial data)
+        _seed_if_empty(conn, cur)
     # Migration runs separately (safe to call on existing DBs)
     migrate_add_talla()
 
@@ -214,81 +214,163 @@ def get_tallas(tipo_talla):
     return TALLAS.get(tipo_talla, ["Única"])
 
 
-def _seed(conn, cur):
+def _seed_if_empty(conn, cur):
+    """Seeds each table only if it has no rows — safe to call on partial DBs."""
     ph = "%s" if USE_PG else "?"
+    def count(table):
+        cur.execute(f"SELECT COUNT(*) FROM {table}")
+        row = cur.fetchone()
+        return list(row.values())[0] if isinstance(row, dict) else row[0]
 
-    def ins(sql, rows):
-        cur.executemany(sql.replace("?", ph), rows)
+    if count("tallas_catalogo") == 0:
+        _seed_tallas(conn, cur)
+    if count("categorias") == 0:
+        _seed_categorias(conn, cur)
+    if count("productos") == 0:
+        _seed_productos(conn, cur)
+    if count("inventario") == 0:
+        _seed_inventario(conn, cur)
+    if count("clientes") == 0:
+        _seed_clientes(conn, cur)
+    if count("ventas") == 0:
+        _seed_ventas(conn, cur)
+    _seed_config(conn, cur)
 
-    # Tallas catálogo
-    tallas_rows = []
-    for tipo, tallas in TALLAS.items():
-        for orden, talla in enumerate(tallas):
-            tallas_rows.append((tipo, talla, orden))
-    ins("INSERT OR IGNORE INTO tallas_catalogo(tipo,talla,orden) VALUES(?,?,?)", tallas_rows)
 
-    ins("INSERT INTO categorias(nombre,emoji,descripcion) VALUES(?,?,?)", [
+
+def _seed(conn, cur):
+    """Full seed — only called on brand new empty DB."""
+    _seed_if_empty(conn, cur)
+
+
+def _seed_tallas(conn, cur):
+    ph = "%s" if USE_PG else "?"
+    tallas_rows = [(tipo, talla, orden) for tipo, tallas in TALLAS.items() for orden, talla in enumerate(tallas)]
+    if USE_PG:
+        cur.executemany("INSERT INTO tallas_catalogo(tipo,talla,orden) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", tallas_rows)
+    else:
+        cur.executemany("INSERT OR IGNORE INTO tallas_catalogo(tipo,talla,orden) VALUES(?,?,?)", tallas_rows)
+
+
+def _seed_categorias(conn, cur):
+    rows = [
         ('Uniformes Escolares',    '🎒', 'Uniformes para nivel básico y medio'),
         ('Uniformes Deportivos',   '🎽', 'Pants, shorts y playeras deportivas'),
         ('Uniformes Empresariales','👔', 'Camisas, chalecos y pantalones de trabajo'),
         ('Calzado',                '👟', 'Zapatos y tenis escolares/deportivos'),
         ('Accesorios',             '🧢', 'Corbatas, cinturones, gorras y más'),
-    ])
-    ins("INSERT INTO productos(nombre,precio,categoria_id,emoji,tipo_talla) VALUES(?,?,?,?,?)", [
-        ('Camisa Escolar Blanca',    185, 1, '👕', 'escolar_num'),
-        ('Pantalón Escolar Azul',    220, 1, '👖', 'escolar_num'),
-        ('Falda Escolar Cuadros',    195, 1, '👗', 'escolar_num'),
-        ('Sudadera Escolar',         280, 1, '🧥', 'escolar_num'),
-        ('Playera Polo Escolar',     165, 1, '👚', 'escolar_num'),
-        ('Pants Deportivo Completo', 350, 2, '🩱', 'ropa'),
-        ('Playera Deportiva',        150, 2, '🎽', 'ropa'),
-        ('Short Deportivo',          120, 2, '🩲', 'ropa'),
-        ('Camisa Empresarial',       320, 3, '👔', 'ropa'),
-        ('Chaleco Empresarial',      280, 3, '🦺', 'ropa'),
-        ('Pantalón de Trabajo',      350, 3, '👖', 'ropa'),
-        ('Zapato Escolar Negro',     480, 4, '👞', 'unico'),
-        ('Tenis Deportivo Blanco',   520, 4, '👟', 'unico'),
-        ('Corbata Escolar',           85, 5, '👔', 'unico'),
-        ('Cinturón Negro',           110, 5, '🪢', 'unico'),
-        ('Gorra con Logo',           145, 5, '🧢', 'unico'),
-        ('Calcetines Escolares',      45, 5, '🧦', 'unico'),
-    ])
-    # Inventario con tallas: (prod_id, tipo_talla, localidad, cant_por_talla, min, max)
+    ]
+    if USE_PG:
+        cur.executemany("INSERT INTO categorias(nombre,emoji,descripcion) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", rows)
+    else:
+        cur.executemany("INSERT OR IGNORE INTO categorias(nombre,emoji,descripcion) VALUES(?,?,?)", rows)
+
+
+def _seed_productos(conn, cur):
+    # Get category IDs by name (safe even if order changed)
+    ph = "%s" if USE_PG else "?"
+    def cat_id(nombre):
+        cur.execute(f"SELECT id FROM categorias WHERE nombre={ph}", (nombre,))
+        row = cur.fetchone()
+        if not row: return None
+        return list(row.values())[0] if isinstance(row, dict) else row[0]
+
+    c1 = cat_id('Uniformes Escolares')
+    c2 = cat_id('Uniformes Deportivos')
+    c3 = cat_id('Uniformes Empresariales')
+    c4 = cat_id('Calzado')
+    c5 = cat_id('Accesorios')
+
+    if not c1:  # categorias vacías, no podemos insertar productos
+        return
+
+    rows = [
+        ('Camisa Escolar Blanca',    185, c1, '👕', 'escolar_num'),
+        ('Pantalón Escolar Azul',    220, c1, '👖', 'escolar_num'),
+        ('Falda Escolar Cuadros',    195, c1, '👗', 'escolar_num'),
+        ('Sudadera Escolar',         280, c1, '🧥', 'escolar_num'),
+        ('Playera Polo Escolar',     165, c1, '👚', 'escolar_num'),
+        ('Pants Deportivo Completo', 350, c2, '🩱', 'ropa'),
+        ('Playera Deportiva',        150, c2, '🎽', 'ropa'),
+        ('Short Deportivo',          120, c2, '🩲', 'ropa'),
+        ('Camisa Empresarial',       320, c3, '👔', 'ropa'),
+        ('Chaleco Empresarial',      280, c3, '🦺', 'ropa'),
+        ('Pantalón de Trabajo',      350, c3, '👖', 'ropa'),
+        ('Zapato Escolar Negro',     480, c4, '👞', 'unico'),
+        ('Tenis Deportivo Blanco',   520, c4, '👟', 'unico'),
+        ('Corbata Escolar',           85, c5, '👔', 'unico'),
+        ('Cinturón Negro',           110, c5, '🪢', 'unico'),
+        ('Gorra con Logo',           145, c5, '🧢', 'unico'),
+        ('Calcetines Escolares',      45, c5, '🧦', 'unico'),
+    ]
+    if USE_PG:
+        cur.executemany("INSERT INTO productos(nombre,precio,categoria_id,emoji,tipo_talla) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", rows)
+    else:
+        cur.executemany("INSERT OR IGNORE INTO productos(nombre,precio,categoria_id,emoji,tipo_talla) VALUES(?,?,?,?,?)", rows)
+
+
+def _seed_inventario(conn, cur):
+    ph = "%s" if USE_PG else "?"
+    # Get product IDs by name
+    def pid(nombre):
+        cur.execute(f"SELECT id, tipo_talla FROM productos WHERE nombre={ph}", (nombre,))
+        row = cur.fetchone()
+        if not row: return None, 'unico'
+        if isinstance(row, dict): return row['id'], row['tipo_talla']
+        return row[0], row[1]
+
     prod_inv = [
-        (1,'escolar_num','Tienda Principal',8,2,20),
-        (2,'escolar_num','Tienda Principal',6,2,15),
-        (3,'escolar_num','Tienda Principal',5,2,15),
-        (4,'escolar_num','Almacén',5,2,15),
-        (5,'escolar_num','Tienda Principal',4,2,12),
-        (6,'ropa','Almacén',3,1,10),
-        (7,'ropa','Tienda Principal',8,2,20),
-        (8,'ropa','Tienda Principal',7,2,18),
-        (9,'ropa','Almacén',4,1,12),
-        (10,'ropa','Almacén',3,1,8),
-        (11,'ropa','Almacén',4,1,10),
-        (12,'unico','Tienda Principal',4,5,30),
-        (13,'unico','Tienda Principal',8,5,30),
-        (14,'unico','Tienda Principal',35,5,60),
-        (15,'unico','Almacén',25,5,50),
-        (16,'unico','Almacén',3,2,20),
-        (17,'unico','Tienda Principal',50,10,80),
+        ('Camisa Escolar Blanca',    'Tienda Principal', 8, 2, 20),
+        ('Pantalón Escolar Azul',    'Tienda Principal', 6, 2, 15),
+        ('Falda Escolar Cuadros',    'Tienda Principal', 5, 2, 15),
+        ('Sudadera Escolar',         'Almacén',          5, 2, 15),
+        ('Playera Polo Escolar',     'Tienda Principal', 4, 2, 12),
+        ('Pants Deportivo Completo', 'Almacén',          3, 1, 10),
+        ('Playera Deportiva',        'Tienda Principal', 8, 2, 20),
+        ('Short Deportivo',          'Tienda Principal', 7, 2, 18),
+        ('Camisa Empresarial',       'Almacén',          4, 1, 12),
+        ('Chaleco Empresarial',      'Almacén',          3, 1,  8),
+        ('Pantalón de Trabajo',      'Almacén',          4, 1, 10),
+        ('Zapato Escolar Negro',     'Tienda Principal', 4, 5, 30),
+        ('Tenis Deportivo Blanco',   'Tienda Principal', 8, 5, 30),
+        ('Corbata Escolar',          'Tienda Principal',35, 5, 60),
+        ('Cinturón Negro',           'Almacén',         25, 5, 50),
+        ('Gorra con Logo',           'Almacén',          3, 2, 20),
+        ('Calcetines Escolares',     'Tienda Principal',50,10, 80),
     ]
     inv_rows = []
-    for pid, tipo, loc, cant, mn, mx in prod_inv:
-        for talla in TALLAS.get(tipo, ["Única"]):
-            inv_rows.append((pid, talla, loc, cant, mn, mx))
-    ins("INSERT INTO inventario(producto_id,talla,localidad,cantidad,min_stock,max_stock) VALUES(?,?,?,?,?,?)", inv_rows)
-    ins("INSERT INTO clientes(nombre,telefono,email,rfc,direccion,notas) VALUES(?,?,?,?,?,?)", [
+    for nombre, loc, cant, mn, mx in prod_inv:
+        producto_id, tipo_talla = pid(nombre)
+        if not producto_id: continue
+        for talla in TALLAS.get(tipo_talla, ["Única"]):
+            inv_rows.append((producto_id, talla, loc, cant, mn, mx))
+
+    if USE_PG:
+        cur.executemany("INSERT INTO inventario(producto_id,talla,localidad,cantidad,min_stock,max_stock) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", inv_rows)
+    else:
+        cur.executemany("INSERT OR IGNORE INTO inventario(producto_id,talla,localidad,cantidad,min_stock,max_stock) VALUES(?,?,?,?,?,?)", inv_rows)
+
+
+def _seed_clientes(conn, cur):
+    rows = [
         ('Escuela Primaria Benito Juárez','664-100-0001','compras@juarez.edu.mx','ESB900101AA1','Av. Principal 100, TJ','Pedido anual en agosto'),
         ('Secundaria Lázaro Cárdenas',   '664-100-0002','admin@lazaro.edu.mx',  'SLC850615BB2','Blvd. Centro 200, TJ', 'Cliente frecuente'),
         ('Empresa Logística MX',         '664-100-0003','rh@logisticamx.com',   'ELM920320CC3','Zona Industrial 45, TJ','Uniformes ejecutivos'),
         ('Deportivo Municipal',          '664-100-0004','contacto@deportivo.mx','DMP880712DD4','Parque Central s/n, TJ','Equipos de fútbol'),
         ('Prepa Técnica No. 5',          '664-100-0005','prepa5@edu.mx',        'PTN950815EE5','Col. Libertad 78, TJ', ''),
-    ])
+    ]
+    if USE_PG:
+        cur.executemany("INSERT INTO clientes(nombre,telefono,email,rfc,direccion,notas) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", rows)
+    else:
+        cur.executemany("INSERT OR IGNORE INTO clientes(nombre,telefono,email,rfc,direccion,notas) VALUES(?,?,?,?,?,?)", rows)
+
+
+def _seed_config(conn, cur):
     cfg = [('app_nombre','UniControl'),('app_subtitulo','Sistema de Uniformes'),
            ('empresa_nombre','Mi Empresa de Uniformes'),('empresa_rfc',''),
            ('empresa_direccion',''),('empresa_telefono',''),('empresa_email',''),
            ('iva_pct','16'),('moneda','MXN'),('groq_api_key',''),
+           ('anthropic_api_key',''),('ai_provider','Groq'),
            ('apartado_dias_alerta','7')]
     if USE_PG:
         for k,v in cfg:
@@ -297,36 +379,60 @@ def _seed(conn, cur):
         for k,v in cfg:
             cur.execute("INSERT OR IGNORE INTO config VALUES(?,?)",(k,v))
 
-    precios = [185,220,195,280,165,350,150,120,320,280,350,480,520,85,110,145,45]
+
+def _seed_ventas(conn, cur):
+    import random
+    ph = "%s" if USE_PG else "?"
+    precios_map = {}
+    cur.execute("SELECT id, precio FROM productos")
+    for row in cur.fetchall():
+        r = dict(row) if not isinstance(row, dict) else row
+        if isinstance(row, dict):
+            precios_map[row['id']] = float(row['precio'])
+        else:
+            precios_map[row[0]] = float(row[1])
+    if not precios_map: return
+
+    prod_ids = list(precios_map.keys())
     now = datetime.now()
     for i in range(15):
         fecha  = now - timedelta(days=random.randint(0,13), hours=random.randint(0,8))
         folio  = f"V-{1001+i}"
-        cli_id = random.randint(1,5)
+        cur.execute(f"SELECT id FROM clientes LIMIT 5")
+        cli_rows = cur.fetchall()
+        if not cli_rows: continue
+        cli_ids = [list(r.values())[0] if isinstance(r,dict) else r[0] for r in cli_rows]
+        cli_id = random.choice(cli_ids)
         metodo = random.choice(['Efectivo','Tarjeta','Transferencia'])
         fv = fecha if USE_PG else fecha.isoformat()
-        if USE_PG:
-            cur.execute("INSERT INTO ventas(folio,fecha,cliente_id,subtotal,impuesto,total,metodo_pago,estado)"
-                        " VALUES(%s,%s,%s,0,0,0,%s,'Completada') RETURNING id",(folio,fv,cli_id,metodo))
-            vid = cur.fetchone()['id']
-        else:
-            cur.execute("INSERT INTO ventas(folio,fecha,cliente_id,subtotal,impuesto,total,metodo_pago,estado)"
-                        " VALUES(?,?,?,0,0,0,?,'Completada')",(folio,fv,cli_id,metodo))
-            vid = cur.lastrowid
-        sub = 0
-        for _ in range(random.randint(1,4)):
-            pid=random.randint(1,17); qty=random.randint(1,6)
-            p=precios[pid-1]; line=p*qty; sub+=line
-            cur.execute(("INSERT INTO venta_items(venta_id,producto_id,cantidad,precio_unitario,subtotal)"
-                         " VALUES(%s,%s,%s,%s,%s)" if USE_PG else
-                         "INSERT INTO venta_items(venta_id,producto_id,cantidad,precio_unitario,subtotal)"
-                         " VALUES(?,?,?,?,?)"),(vid,pid,qty,p,line))
-        imp=round(sub*0.16,2)
-        cur.execute(("UPDATE ventas SET subtotal=%s,impuesto=%s,total=%s WHERE id=%s" if USE_PG else
-                     "UPDATE ventas SET subtotal=?,impuesto=?,total=? WHERE id=?"),(sub,imp,sub+imp,vid))
+        try:
+            if USE_PG:
+                cur.execute("INSERT INTO ventas(folio,fecha,cliente_id,subtotal,impuesto,total,metodo_pago,estado) VALUES(%s,%s,%s,0,0,0,%s,'Completada') ON CONFLICT DO NOTHING RETURNING id",(folio,fv,cli_id,metodo))
+                row = cur.fetchone()
+                if not row: continue
+                vid = list(row.values())[0] if isinstance(row,dict) else row[0]
+            else:
+                cur.execute("INSERT OR IGNORE INTO ventas(folio,fecha,cliente_id,subtotal,impuesto,total,metodo_pago,estado) VALUES(?,?,?,0,0,0,?,'Completada')",(folio,fv,cli_id,metodo))
+                vid = cur.lastrowid
+                if not vid: continue
+            sub = 0
+            for _ in range(random.randint(1,4)):
+                pid_v = random.choice(prod_ids)
+                qty   = random.randint(1,6)
+                price = precios_map[pid_v]
+                line  = price*qty; sub+=line
+                if USE_PG:
+                    cur.execute("INSERT INTO venta_items(venta_id,producto_id,talla,cantidad,precio_unitario,subtotal) VALUES(%s,%s,%s,%s,%s,%s)",(vid,pid_v,'Única',qty,price,line))
+                else:
+                    cur.execute("INSERT OR IGNORE INTO venta_items(venta_id,producto_id,talla,cantidad,precio_unitario,subtotal) VALUES(?,?,?,?,?,?)",(vid,pid_v,'Única',qty,price,line))
+            imp=round(sub*0.16,2)
+            if USE_PG:
+                cur.execute("UPDATE ventas SET subtotal=%s,impuesto=%s,total=%s WHERE id=%s",(sub,imp,sub+imp,vid))
+            else:
+                cur.execute("UPDATE ventas SET subtotal=?,impuesto=?,total=? WHERE id=?",(sub,imp,sub+imp,vid))
+        except: continue
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def get_tallas_producto(producto_id):
     """Retorna lista de tallas disponibles para un producto según su tipo_talla."""

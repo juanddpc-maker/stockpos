@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from database import q, run, raw_query, raw_exec, engine_info
+from database import q, run, raw_query, raw_exec, engine_info, _seed_if_empty, _ctx
 
 TABLAS = ["categorias","productos","inventario","clientes","ventas","venta_items",
           "apartados","apartado_items","apartado_abonos","config"]
@@ -299,6 +299,25 @@ def render():
                             else:
                                 run(f"DELETE FROM {tabla}")
                             st.success(f"✅ Tabla **{tabla}** depurada correctamente. {total} fila(s) eliminada(s).")
+                            # Re-seed this table with sample data
+                            try:
+                                from database import _ctx as db_ctx
+                                from database import (_seed_tallas, _seed_categorias, _seed_productos,
+                                                       _seed_inventario, _seed_clientes, _seed_config)
+                                with db_ctx() as conn2:
+                                    cur2 = conn2.cursor()
+                                    seed_fn = {
+                                        "tallas_catalogo": _seed_tallas,
+                                        "categorias":      _seed_categorias,
+                                        "productos":       _seed_productos,
+                                        "inventario":      _seed_inventario,
+                                        "clientes":        _seed_clientes,
+                                        "config":          _seed_config,
+                                    }.get(tabla)
+                                    if seed_fn:
+                                        seed_fn(conn2, cur2)
+                            except Exception as se:
+                                pass  # seed optional
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error al depurar: {e}")
@@ -326,7 +345,14 @@ def render():
                              "tallas_catalogo","config"]
                     for t in orden:
                         run(f"DELETE FROM {t}")
-                    st.success("✅ Reset completo realizado. Reinicia la app para cargar los datos de muestra.")
-                    st.info("💡 Para recargar los datos de muestra, reinicia la app o haz un nuevo deploy.")
+                    # Re-seed after reset
+                    try:
+                        from database import _ctx as db_ctx, _seed_if_empty as _sif
+                        with db_ctx() as conn2:
+                            cur2 = conn2.cursor()
+                            _sif(conn2, cur2)
+                        st.success("✅ Reset completo realizado y datos de muestra recargados.")
+                    except Exception as se:
+                        st.success("✅ Reset completo realizado. Reinicia la app para cargar los datos de muestra.")
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
