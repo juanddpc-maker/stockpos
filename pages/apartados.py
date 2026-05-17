@@ -50,7 +50,7 @@ def _tab_activos():
         st.info("No hay apartados activos 🎉")
         return
     for a in rows:
-        _card_apartado(a)
+        _card_apartado(a, tab_ctx="activos")
 
 
 def _tab_vencer():
@@ -74,7 +74,7 @@ def _tab_vencer():
             vencido = a['fecha_limite'] and a['fecha_limite'][:10] < hoy.strftime('%Y-%m-%d')
             label = "🔴 VENCIDO" if vencido else "🟡 Por vencer"
             st.markdown(f"**{label}** · Folio {a['folio']} · Vence: {fl}")
-            _card_apartado(a, collapsed=False)
+            _card_apartado(a, collapsed=False, tab_ctx="vencer")
 
     st.divider()
     st.subheader("📊 Análisis de antigüedad")
@@ -130,7 +130,7 @@ def _tab_historial():
             _detalle_items(a['id'])
 
 
-def _card_apartado(a, collapsed=True):
+def _card_apartado(a, collapsed=True, tab_ctx=""):
     pct = int((float(a['abonado']) / float(a['total_venta'])) * 100) if float(a['total_venta']) else 0
     fl  = str(a['fecha_limite'])[:10] if a['fecha_limite'] else "Sin límite"
     with st.expander(
@@ -156,7 +156,7 @@ def _card_apartado(a, collapsed=True):
             _detalle_abonos(a['id'])
             st.divider()
             # Formulario de abono
-            with st.form(f"abono_{a['id']}"):
+            with st.form(f"abono_{a['id']}_{tab_ctx}"):
                 st.markdown("**Registrar nuevo abono**")
                 ab1, ab2 = st.columns(2)
                 monto_ab = ab1.number_input("Monto del abono", min_value=0.01,
@@ -164,20 +164,20 @@ def _card_apartado(a, collapsed=True):
                 metodo_ab = ab2.selectbox("Método",
                                           ["Efectivo","Tarjeta de Débito","Tarjeta de Crédito","Transferencia"])
                 notas_ab = st.text_input("Notas del abono")
-                if st.form_submit_button("💵 Registrar abono", type="primary", use_container_width=True):
+                if st.form_submit_button("💵 Registrar abono", type="primary", use_container_width=True, key=None):
                     _registrar_abono(a['id'], monto_ab, metodo_ab, notas_ab)
 
         with tab_acc:
             st.markdown("**Acciones sobre este apartado**")
             col_liq, col_can = st.columns(2)
             if col_liq.button("✅ Liquidar (cobrar saldo y entregar)",
-                              key=f"liq_{a['id']}", use_container_width=True, type="primary"):
+                              key=f"liq_{a['id']}_{tab_ctx}", use_container_width=True, type="primary"):
                 _liquidar(a)
             st.caption("Al liquidar se descuenta el inventario y el apartado queda cerrado.")
             st.divider()
-            conf_cancel = st.checkbox(f"Confirmar cancelación del apartado {a['folio']}", key=f"chk_can_{a['id']}")
+            conf_cancel = st.checkbox(f"Confirmar cancelación del apartado {a['folio']}", key=f"chk_can_{a['id']}_{tab_ctx}")
             if conf_cancel:
-                if col_can.button("❌ Cancelar apartado", key=f"can_{a['id']}", use_container_width=True):
+                if col_can.button("❌ Cancelar apartado", key=f"can_{a['id']}_{tab_ctx}", use_container_width=True):
                     run("UPDATE apartados SET estado='Cancelado' WHERE id=?", (a['id'],))
                     st.warning("Apartado cancelado"); st.rerun()
 
